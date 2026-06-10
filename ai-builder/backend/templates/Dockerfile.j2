@@ -1,0 +1,17 @@
+FROM {{ base_image }}
+
+WORKDIR /app
+
+COPY requirements.txt* package.json* pyproject.toml* ./
+
+{% if "python" in base_image.lower() or "node" not in base_image.lower() %}
+RUN pip install --no-cache-dir -r requirements.txt 2>/dev/null || pip install --no-cache-dir . 2>/dev/null || true
+{% else %}
+RUN npm ci --omit=dev 2>/dev/null || npm install --production 2>/dev/null || true
+{% endif %}
+
+COPY . .
+
+EXPOSE {{ port }}
+
+CMD {{ start_command }}

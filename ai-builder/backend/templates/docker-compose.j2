@@ -1,0 +1,22 @@
+services:
+{% for service in services %}
+  {{ service.name }}:
+    image: {{ service.image }}
+    build: .
+{% if service.ports %}
+    ports:
+{% for port in service.ports %}
+      - "{{ port }}"
+{% endfor %}
+{% endif %}
+{% if service.env_vars %}
+    environment:
+{% for key, value in service.env_vars.items() %}
+      {{ key }}: "{{ value }}"
+{% endfor %}
+{% endif %}
+    restart: unless-stopped
+{% if not loop.last %}
+
+{% endif %}
+{% endfor %}
