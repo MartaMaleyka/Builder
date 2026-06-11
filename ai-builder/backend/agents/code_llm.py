@@ -19,6 +19,31 @@ T = TypeVar("T", bound=BaseModel)
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 CODE_MODEL = "qwen2.5-coder:7b"
 TEXT_MODEL = "qwen2.5:7b"
+FRONTEND_MODEL = "qwen2.5:14b"
+
+# Para texto general y PRD
+text_llm = ChatOllama(
+    model=TEXT_MODEL,
+    base_url=OLLAMA_BASE_URL,
+    temperature=0.1,
+    num_predict=2048,
+)
+
+# Para código backend (routes, models, services)
+code_llm = ChatOllama(
+    model=CODE_MODEL,
+    base_url=OLLAMA_BASE_URL,
+    temperature=0.1,
+    num_predict=2048,
+)
+
+# Para frontend — modelo más potente
+frontend_llm = ChatOllama(
+    model=FRONTEND_MODEL,
+    base_url=OLLAMA_BASE_URL,
+    temperature=0.2,
+    num_predict=4096,
+)
 
 FALLBACK_JSON_PROMPT = (
     "Respond with ONLY valid JSON matching the requested schema. "
@@ -30,12 +55,8 @@ class CodeLLMClient:
     """Invokes Ollama models for structured code generation output."""
 
     def __init__(self) -> None:
-        self._code_llm = ChatOllama(
-            model=CODE_MODEL, base_url=OLLAMA_BASE_URL, temperature=0.1
-        )
-        self._text_llm = ChatOllama(
-            model=TEXT_MODEL, base_url=OLLAMA_BASE_URL, temperature=0.2
-        )
+        self._code_llm = code_llm
+        self._text_llm = text_llm
 
     async def generate_files(self, messages: list[BaseMessage]) -> ModuleLLMOutput:
         return await self._invoke_structured(self._code_llm, ModuleLLMOutput, messages)

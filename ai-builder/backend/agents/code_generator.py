@@ -17,7 +17,8 @@ from agents.code_helpers import (
     save_module_files,
     set_module_state,
 )
-from agents.code_llm import CodeLLMClient
+from agents.code_llm import CodeLLMClient, code_llm, frontend_llm
+from agents.frontend_qa_agent import FrontendQAAgent
 from agents.code_prompts import build_module_prompt, module_plan
 from agents.template_manager import TemplateManager
 from models.schemas import (
@@ -28,7 +29,6 @@ from models.schemas import (
     GeneratedFile,
     GenerationResult,
     ModuleFileOutput,
-    ModuleLLMOutput,
     ModuleState,
     ModuleStatus,
     PRDDocument,
@@ -40,12 +40,6 @@ generation_store: dict[str, GenerationResult] = {}
 _TEMPLATE_MODULES = frozenset({"dockerfile", "docker_compose", "readme"})
 _STRUCTURE_MODULE = "project_structure"
 _SEED_MODULE = "seed"
-_MODULE_HINTS: dict[str, tuple[str, ...]] = {
-    "data_models": ("model", "schema", "entity", "migration", "prisma", "/db/", "database"),
-    "backend_core": ("route", "controller", "service", "handler", "router", "/api/", "backend/", "server"),
-    "frontend_core": ("frontend/", "component", "page", "view", "/ui/", "layout", "styles", "astro", "react"),
-    "auth": ("auth", "middleware", "guard", "login", "session", "jwt"),
-}
 
 
 def _filter_valid_files(files: list[ModuleFileOutput]) -> list[ModuleFileOutput]:
@@ -70,8 +64,7 @@ class CodeGenerator:
         self._get_context = get_context
         self._llm = CodeLLMClient()
         self._templates = TemplateManager()
-        self._structure_paths: list[str] = []
-        self._assigned_paths: set[str] = set()
+        self._qa_agent = FrontendQAAgent()
 
     async def generate(self, session_id: str) -> GenerationResult:
         prd = self._get_prd(session_id)
@@ -81,21 +74,23 @@ class CodeGenerator:
         if context is None:
             raise ValueError(f"No clarify context for session {session_id}")
 
-        self._structure_paths = []
-        self._assigned_paths = set()
-
         names = module_plan(prd, context)
         result = init_generation_result(session_id, names)
         generation_store[session_id] = result.model_copy(deep=True)
 
         completed: list[ModuleStatus] = []
         for module_name in names:
+            if module_name == _STRUCTURE_MODULE:
+                continue
+
             set_module_state(result, module_name, ModuleState.GENERATING)
             generation_store[session_id] = result.model_copy(deep=True)
 
             try:
                 raw = await self._generate_module(module_name, prd, context, completed)
                 save_module_files(result, module_name, _filter_valid_files(raw))
+                if module_name == "frontend_core":
+                    await self._run_frontend_qa(result, prd)
                 completed.append(self._find_module(result, module_name))
             except Exception as exc:
                 print(f"[CodeGenerator] Module {module_name} failed: {exc}")
@@ -104,9 +99,144 @@ class CodeGenerator:
             generation_store[session_id] = result.model_copy(deep=True)
 
         self._apply_fixed_files(result, prd)
+
+        set_module_state(result, _STRUCTURE_MODULE, ModuleState.GENERATING)
+        generation_store[session_id] = result.model_copy(deep=True)
+        try:
+            module_status = await self._generate_project_structure_module(result, prd)
+            self._apply_module_status(result, module_status)
+        except Exception as exc:
+            print(f"[CodeGenerator] Module {_STRUCTURE_MODULE} failed: {exc}")
+            mark_module_failed(result, _STRUCTURE_MODULE, str(exc))
+
+        generation_store[session_id] = result.model_copy(deep=True)
         finalize_result(result)
         generation_store[session_id] = result.model_copy(deep=True)
         return result
+
+    async def _run_frontend_qa(self, result: GenerationResult, prd: PRDDocument) -> None:
+        for module in result.modules:
+            if module.module_name != "frontend_core":
+                continue
+            print("[CodeGenerator] Running QA on frontend files...")
+            qa_agent = self._qa_agent
+            improved_files: list[GeneratedFile] = []
+            for file in module.files:
+                try:
+                    if (
+                        file.path.endswith((".jsx", ".tsx"))
+                        and file.content
+                        and len(file.content.strip()) > 100
+                    ):
+                        improved_file = await qa_agent.process(file, prd)
+                        improved_files.append(improved_file)
+                    else:
+                        improved_files.append(file)
+                except Exception as e:
+                    print(f"[QAAgent] SKIP {file.path}: {e}")
+                    improved_files.append(file)
+            module.files = improved_files
+            print(f"[CodeGenerator] QA complete: {len(improved_files)} files processed")
+            break
+
+    @staticmethod
+    def _apply_module_status(result: GenerationResult, module_status: ModuleStatus) -> None:
+        for mod in result.modules:
+            if mod.module_name == module_status.module_name:
+                mod.files = module_status.files
+                mod.status = module_status.status
+                mod.error = module_status.error
+                break
+        result.total_files = sum(len(m.files) for m in result.modules)
+
+    async def _generate_project_structure_module(
+        self,
+        result: GenerationResult,
+        prd: PRDDocument,
+    ) -> ModuleStatus:
+        all_files: list[GeneratedFile] = []
+        for module in result.modules:
+            if module.module_name == _STRUCTURE_MODULE:
+                continue
+            for file in module.files:
+                if file.content and len(file.content.strip()) > 0:
+                    all_files.append(file)
+
+        groups: dict[str, list[str]] = {}
+        for file in all_files:
+            folder = "/".join(file.path.split("/")[:-1]) or "root"
+            groups.setdefault(folder, []).append(file.path.split("/")[-1])
+
+        tree_lines = [f"# {prd.title}", ""]
+        tree_lines.append("## Estructura del proyecto")
+        tree_lines.append("```")
+        for folder, files in sorted(groups.items()):
+            tree_lines.append(f"{folder}/")
+            for fname in sorted(files):
+                tree_lines.append(f"  ├── {fname}")
+        tree_lines.append("```")
+        tree_lines.append("")
+
+        tree_lines.append("## Resumen de generación")
+        tree_lines.append("")
+        for module in result.modules:
+            if module.module_name == _STRUCTURE_MODULE:
+                continue
+            files_with_content = [
+                f for f in module.files if f.content and len(f.content.strip()) > 0
+            ]
+            if not files_with_content:
+                continue
+            tree_lines.append(f"### {module.module_name}")
+            for file in files_with_content:
+                lines = len(file.content.split("\n"))
+                tree_lines.append(f"  - `{file.path}` ({lines} líneas)")
+            tree_lines.append("")
+
+        total_files = len(all_files)
+        total_lines = sum(len(f.content.split("\n")) for f in all_files)
+        endpoints = list(prd.api_endpoints) if prd.api_endpoints else []
+
+        tree_lines.append("## Estadísticas")
+        tree_lines.append(f"- **Total archivos generados:** {total_files}")
+        tree_lines.append(f"- **Total líneas de código:** {total_lines:,}")
+        tree_lines.append(f"- **Endpoints API:** {len(endpoints)}")
+        tree_lines.append(f"- **Entidades del modelo:** {len(prd.data_model)}")
+        tree_lines.append(
+            f"- **Stack:** {prd.proposed_stack.frontend} + {prd.proposed_stack.backend}"
+        )
+        tree_lines.append("")
+
+        tree_lines.append("## Cómo correr el proyecto")
+        tree_lines.append("```bash")
+        tree_lines.append("# Backend")
+        tree_lines.append("cd backend && npm install && npm run seed && npm run dev")
+        tree_lines.append("")
+        tree_lines.append("# Frontend")
+        tree_lines.append("cd frontend && npm install && npm run dev")
+        tree_lines.append("")
+        tree_lines.append("# Con Docker")
+        tree_lines.append("docker compose up --build")
+        tree_lines.append("```")
+
+        manifest_content = "\n".join(tree_lines)
+        manifest_file = GeneratedFile(
+            path="PROJECT_MANIFEST.md",
+            content=manifest_content,
+            module=_STRUCTURE_MODULE,
+        )
+
+        print(
+            f"[CodeGenerator] project_structure manifest: {total_files} files, "
+            f"{total_lines:,} lines"
+        )
+
+        return ModuleStatus(
+            module_name=_STRUCTURE_MODULE,
+            status=ModuleState.DONE,
+            files=[manifest_file],
+            error=None,
+        )
 
     def _apply_fixed_files(self, result: GenerationResult, prd: PRDDocument) -> None:
         """Overwrite or inject canonical files that must not come from the LLM."""
@@ -152,11 +282,9 @@ class CodeGenerator:
     ) -> list[ModuleFileOutput]:
         if module_name in _TEMPLATE_MODULES:
             return await self._generate_template_module(module_name, prd, context, completed)
-        if module_name == _STRUCTURE_MODULE:
-            return await self._generate_structure_module(prd, context, completed)
         if module_name == _SEED_MODULE:
             return await self._generate_seed_module(prd, context, completed)
-        return await self._generate_files_one_by_one(module_name, prd, completed)
+        return await self._generate_files_one_by_one(module_name, prd, context, completed)
 
     async def _generate_seed_module(
         self,
@@ -178,44 +306,69 @@ class CodeGenerator:
         print(f"[CodeGenerator] seed module: {len(output.files)} files")
         return output.files
 
-    async def _generate_structure_module(
+    def _planned_paths_for_module(
         self,
+        module_name: str,
         prd: PRDDocument,
-        context: ClarifyContext,
-        completed: list[ModuleStatus],
-    ) -> list[ModuleFileOutput]:
-        system = SystemMessage(content=build_module_prompt(_STRUCTURE_MODULE, prd, context))
-        context_msgs = build_context_messages(completed)
-        user = HumanMessage(
-            content="List every file path in the project tree. Return paths only; content may be empty."
-        )
-        output = await self._llm.generate_files([system, *context_msgs, user])
-        raw = output.model_dump_json()
-        print("=== PROJECT STRUCTURE RAW ===")
-        print(repr(raw[:1000]))
-        print("=== FIN RAW ===")
-        self._structure_paths = self._extract_structure_paths(output)
-        return output.files
+    ) -> list[str]:
+        entities = prd.data_model
+        if module_name == "data_models":
+            paths = ["backend/src/db/schema.sql", "backend/src/models/index.js"]
+            for entity in entities:
+                slug = entity.name.lower().replace(" ", "_")
+                paths.append(f"backend/src/models/{slug}.js")
+            return paths
 
-    def _extract_structure_paths(self, output: ModuleLLMOutput) -> list[str]:
-        paths: list[str] = []
-        for f in output.files:
-            if "." in f.path.split("/")[-1]:
-                paths.append(f.path)
-        print(f"[CodeGenerator] project_structure paths: {len(paths)}")
-        for p in paths:
-            print(f"  → {p}")
-        return paths
+        if module_name == "backend_core":
+            paths = ["backend/src/server.js", "backend/src/app.js"]
+            for entity in entities:
+                slug = entity.name.lower().replace(" ", "_")
+                paths.extend(
+                    [
+                        f"backend/src/routes/{slug}.js",
+                        f"backend/src/services/{slug}Service.js",
+                    ]
+                )
+            return paths
+
+        if module_name == "frontend_core":
+            paths = [
+                "frontend/src/App.jsx",
+                "frontend/src/components/Layout.jsx",
+                "frontend/src/components/Sidebar.jsx",
+                "frontend/src/components/StatusBadge.jsx",
+                "frontend/src/components/SkeletonLoader.jsx",
+                "frontend/src/components/ErrorState.jsx",
+                "frontend/src/components/EmptyState.jsx",
+            ]
+            for entity in entities:
+                name = entity.name.replace(" ", "")
+                paths.append(f"frontend/src/pages/{name}Page.jsx")
+                paths.append(f"frontend/src/components/{name}Card.jsx")
+            return paths
+
+        if module_name == "auth":
+            return [
+                "backend/src/middleware/auth.js",
+                "backend/src/routes/auth.js",
+                "backend/src/services/authService.js",
+            ]
+
+        return []
 
     async def _generate_files_one_by_one(
         self,
         module_name: str,
         prd: PRDDocument,
+        context: ClarifyContext,
         completed: list[ModuleStatus],
     ) -> list[ModuleFileOutput]:
-        paths = self._paths_for_module(module_name)
+        if module_name == "frontend_core":
+            print("[CodeGenerator] Using qwen2.5:14b for frontend_core")
+
+        paths = self._planned_paths_for_module(module_name, prd)
         if not paths:
-            print(f"[CodeGenerator] No structure paths for {module_name}, skipping.")
+            print(f"[CodeGenerator] No planned paths for {module_name}, skipping.")
             return []
 
         context_str = self._context_summary(completed)
@@ -225,19 +378,7 @@ class CodeGenerator:
             content = await self._generate_single_file(path, context_str, prd)
             if content.strip():
                 files.append(ModuleFileOutput(path=path, content=content))
-                self._assigned_paths.add(path)
         return files
-
-    def _paths_for_module(self, module_name: str) -> list[str]:
-        hints = _MODULE_HINTS.get(module_name, ())
-        matched: list[str] = []
-        for path in self._structure_paths:
-            if path in self._assigned_paths:
-                continue
-            lower = path.lower()
-            if any(hint in lower for hint in hints):
-                matched.append(path)
-        return matched
 
     async def _generate_single_file(
         self,
@@ -245,62 +386,100 @@ class CodeGenerator:
         context: str,
         prd: PRDDocument,
     ) -> str:
+        if file_path.startswith("frontend/src/"):
+            llm = frontend_llm
+        elif file_path.startswith("backend/"):
+            llm = code_llm
+        else:
+            llm = code_llm
+
         ext = file_path.split(".")[-1] if "." in file_path else "txt"
         lang_map = {
+            "jsx": "React JSX with Tailwind CSS",
+            "tsx": "React TSX with Tailwind CSS",
             "js": "JavaScript",
             "ts": "TypeScript",
-            "jsx": "React JSX",
-            "tsx": "React TSX",
             "py": "Python",
             "sql": "SQL",
             "json": "JSON",
             "yml": "YAML",
             "yaml": "YAML",
             "md": "Markdown",
-            "env": "env file",
-            "sh": "bash",
         }
         lang = lang_map.get(ext, ext)
 
-        prompt = f"""Write the complete content for this file: {file_path}
-Language: {lang}
+        if ext in ("jsx", "tsx"):
+            parts = file_path.split("/")
+            entity_name = parts[-1].replace("Page.jsx", "").replace(".jsx", "").replace(".tsx", "")
+            api_slug = f"{entity_name.lower()}s" if entity_name.lower() != "app" else "items"
+            prompt = f"""You are a senior UI/UX frontend engineer.
+Generate the complete React component for: {file_path}
+
 Project: {prd.title}
-Stack: frontend={prd.proposed_stack.frontend} backend={prd.proposed_stack.backend} database={prd.proposed_stack.database}
+Description: {prd.overview}
+Entities: {[e.name for e in prd.data_model]}
 
-Project context:
-{context[:800]}
+MANDATORY UI REQUIREMENTS:
+1. Full sidebar layout if this is App.jsx:
+   - Left sidebar (w-64) with nav links per entity + emoji icons
+   - Active link: left border accent + background tint
+   - App title at top of sidebar
+   - Main content area flex-1 with proper padding
 
-Rules:
-- Return ONLY the file content, no explanations
-- No markdown code blocks, no backticks
-- Must be complete and functional code
-- No TODOs, no placeholders, no comments like 'add logic here'
-- For package.json include real dependency versions
-- For SQL include CREATE TABLE statements
-- For server.js include actual Express routes
+2. For page components (pages/*.jsx):
+   - Page header: title + subtitle + "Nuevo [entity]" button
+   - Stats row: 3-4 metric cards showing counts/totals
+   - Main content: card grid (grid-cols-1 md:grid-cols-2 lg:grid-cols-3)
+     OR data table with sticky header
+   - Loading skeleton: animate-pulse gray blocks
+   - Empty state: centered icon + message + CTA button
+   - Create/Edit modal with proper form fields
 
-Write {file_path} now:"""
+3. For card components (components/*.jsx):
+   - Clear hierarchy: title > badge > metadata > actions
+   - Status badge: pill with semantic bg color
+   - Hover effect: hover:shadow-lg hover:-translate-y-1 transition-all duration-200
+   - Action buttons: edit (pencil icon) + delete (trash icon) as text
 
-        from langchain_ollama import ChatOllama
+4. Fetch pattern — use this exactly:
+   const [items, setItems] = useState([])
+   const [loading, setLoading] = useState(true)
+   const [error, setError] = useState(null)
+   useEffect(() => {{
+     fetch('/api/{api_slug}')
+       .then(r => r.json())
+       .then(setItems)
+       .catch(e => setError(e.message))
+       .finally(() => setLoading(false))
+   }}, [])
 
-        llm = ChatOllama(
-            model="qwen2.5-coder:7b",
-            base_url="http://localhost:11434",
-            temperature=0.1,
-            num_predict=2048,
-        )
+5. Tailwind only — no external UI libraries, no inline styles
+6. Complete code — no TODOs, no placeholders, no '// add logic here'
+
+Context from other modules:
+{context[:600]}
+
+Generate {file_path} now — complete file, no truncation:"""
+        else:
+            prompt = f"""Generate complete {lang} code for: {file_path}
+Project: {prd.title}
+Stack: {prd.proposed_stack}
+Context: {context[:400]}
+Rules: no TODOs, no placeholders, production-ready code.
+Generate {file_path}:"""
+
         response = await llm.ainvoke(prompt)
-        raw = response.content if isinstance(response.content, str) else str(response.content)
-        print(f"=== GENERATING {file_path} ===")
-        print(f"=== RESPONSE LENGTH: {len(raw)} ===")
-        print(f"=== FIRST 200 CHARS: {repr(raw[:200])} ===")
-        content = raw.strip()
+        content = response.content if isinstance(response.content, str) else str(response.content)
+        content = content.strip()
 
         if content.startswith("```"):
             lines = content.split("\n")
-            content = "\n".join(lines[1:-1]) if lines[-1] == "```" else "\n".join(lines[1:])
+            content = "\n".join(lines[1:])
+            if content.endswith("```"):
+                content = content[:-3].strip()
 
-        print(f"[SingleFile] {file_path}: {len(content)} chars")
+        model_name = getattr(llm, "model", "unknown")
+        print(f"[SingleFile:{model_name}] {file_path}: {len(content)} chars")
         return content
 
     @staticmethod

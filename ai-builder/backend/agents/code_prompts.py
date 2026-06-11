@@ -1,6 +1,6 @@
 """System prompts for modular code generation."""
 
-from agents.template_manager import DEFAULT_DOCKER_COMPOSE, TemplateManager
+from agents.template_manager import DEFAULT_DOCKER_COMPOSE
 from models.schemas import AppType, ClarifyContext, PRDDocument
 
 _COMMON_RULES = """Rules for ALL generated code:
@@ -135,7 +135,121 @@ For inventory apps expect:
   - 15 products with real name, description, price and stock
   - 3 users with different roles
   - 10 recent inventory movements
-  - Dates between January 2024 and today"""
+  - Dates between January 2024 and today
+
+SEED DATA RULES:
+- Project names: real business names like 'Rediseño Portal Clientes',
+  'Migración Base de Datos Q1', 'App Móvil v2.0'
+- User names: real Latin American names
+- Descriptions: 1-2 sentences of real business context
+- Dates: spread across last 6 months
+- Statuses: mix of all possible values (not all 'pending')
+- Prices: realistic for the domain (not 9.99 for everything)
+- At least 10 records per main entity
+- NEVER use 'Test', 'Sample', 'Placeholder', 'Project A', 'Task 1'"""
+
+
+FRONTEND_CORE_PROMPT = """You are a senior UI/UX engineer.
+Generate production-quality React components with Tailwind CSS.
+
+DESIGN PRINCIPLES (apply all of them):
+- Visual hierarchy: size, weight, and spacing guide the eye naturally
+- Breathing room: generous padding and whitespace, never cramped
+- Meaningful grouping: related elements visually clustered
+- Feedback states: every interactive element has hover, focus, active states
+- Empty states: when list is empty show an icon + message, not blank space
+- Loading states: show skeleton loaders, not blank space
+- Error states: friendly message with retry option
+- Micro-interactions: subtle transitions (transition-all duration-200)
+- Typography scale: use text-xs through text-4xl intentionally
+- Shadow depth: use shadow-sm for cards, shadow-md on hover
+
+COMPONENT STRUCTURE RULES:
+Each page component must have:
+  1. A page header with title + subtitle + primary action button
+  2. A stats/summary bar if the entity has countable data
+  3. The main content area (table or card grid depending on data type)
+  4. Empty state component when data is []
+  5. Loading skeleton when fetching
+
+Each card component must have:
+  1. A clear visual hierarchy (title > metadata > actions)
+  2. A status badge if the entity has a status field
+  3. Hover effect: hover:shadow-md hover:-translate-y-0.5 transition-all
+  4. Action buttons revealed on hover (opacity-0 group-hover:opacity-100)
+  5. Consistent padding: p-5 or p-6
+
+Each table must have:
+  1. Sticky header with sorted column indicators
+  2. Alternating row backgrounds (even:bg-gray-50)
+  3. Row hover highlight (hover:bg-opacity-50 transition-colors)
+  4. Action column on the right with icon buttons
+  5. Pagination or "showing X of Y" counter
+
+LAYOUT RULES:
+- Main layout: sidebar (w-64) + content area (flex-1)
+- Sidebar: navigation links with active state indicator
+- Content: max-w-7xl mx-auto px-4 sm:px-6 lg:px-8
+- Page padding: py-8
+- Section gaps: space-y-6
+
+NAVIGATION SIDEBAR must include:
+  - App name/logo at top
+  - Nav links for each main entity with an icon (use emoji as icon placeholder)
+  - Active link: distinct left border + background tint
+  - Bottom section: settings link
+
+FORMS must have:
+  - Floating labels or clear label above input
+  - Input focus ring (focus:ring-2 focus:ring-offset-2)
+  - Validation error message below field in red
+  - Submit button full-width on mobile, auto on desktop
+  - Cancel button as ghost/outline variant
+
+STATUS BADGES: use pill badges with semantic classes:
+  - pending/draft:    bg-yellow-100 text-yellow-800
+  - active/done:      bg-green-100  text-green-800
+  - cancelled/error:  bg-red-100    text-red-800
+  - in_progress:      bg-blue-100   text-blue-800
+
+FETCH pattern — always use this hook pattern, never axios:
+  const [data, setData] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    fetch('/api/{entity}')
+      .then(r => { if (!r.ok) throw new Error(r.statusText); return r.json() })
+      .then(d => setData(d))
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return <SkeletonLoader />
+  if (error) return <ErrorState message={error} onRetry={() => ...} />
+
+SKELETON LOADER pattern:
+  <div className="animate-pulse space-y-3">
+    {[...Array(5)].map((_, i) => (
+      <div key={i} className="h-16 bg-gray-200 rounded-lg" />
+    ))}
+  </div>
+
+MODAL pattern for create/edit forms:
+  - Fixed overlay: fixed inset-0 bg-black bg-opacity-50 z-50
+  - Centered panel: max-w-lg w-full mx-auto mt-20 bg-white rounded-xl p-6
+  - Close on overlay click and ESC key
+  - Trap focus inside modal
+
+APP.JSX must implement:
+  - Sidebar layout wrapping all routes
+  - Route per main entity page
+  - 404 fallback route
+
+Generate one file per component. Each file self-contained.
+DO NOT use axios. DO NOT hardcode colors outside of Tailwind classes.
+DO NOT use external UI libraries.
+Generate complete, working code — no TODOs, no placeholders."""
 
 
 def build_seed_prompt(prd: PRDDocument, context: ClarifyContext) -> str:
@@ -195,24 +309,7 @@ def build_module_prompt(
             "Include proper error handling with try/catch in every function.\n"
             "Return structured JSON errors: { error: true, message: string, code: string }"
         ),
-        "frontend_core": base + (
-            "Module: frontend_core\n"
-            "Generate the frontend application: pages, components, API client, routing.\n"
-            "Use the frontend framework from the PRD stack.\n"
-            "Wire UI to the backend endpoints defined in the PRD.\n"
-            "Generate one page component per main view.\n"
-            "Each page imports smaller reusable components.\n"
-            "Use custom hooks for data fetching (useProducts, useOrders, etc).\n"
-            "Each hook handles: loading state, error state, data state.\n"
-            "Use fetch with async/await, never axios unless it's in package.json.\n"
-            "Use React 18 createRoot API, never ReactDOM.render.\n"
-            "For frontend/tailwind.config.js use Tailwind v3 syntax (content, not purge):\n"
-            f"{TemplateManager.get_boilerplate_file('frontend/tailwind.config.js')}\n"
-            "For frontend/src/main.jsx use React 18 createRoot:\n"
-            f"{TemplateManager.get_boilerplate_file('frontend/src/main.jsx')}\n"
-            "For frontend/package.json use React 18 + Vite scripts:\n"
-            f"{TemplateManager.get_boilerplate_file('frontend/package.json')}"
-        ),
+        "frontend_core": base + FRONTEND_CORE_PROMPT,
         "auth": base + (
             "Module: auth\n"
             "Generate authentication and authorization: login, tokens/sessions, "
@@ -265,7 +362,6 @@ def should_include_auth(prd: PRDDocument) -> bool:
 def module_plan(prd: PRDDocument, context: ClarifyContext) -> list[str]:
     """Return ordered module names to generate for this project."""
     modules = [
-        "project_structure",
         "data_models",
         "seed",
         "backend_core",
@@ -274,5 +370,5 @@ def module_plan(prd: PRDDocument, context: ClarifyContext) -> list[str]:
         modules.append("frontend_core")
     if should_include_auth(prd):
         modules.append("auth")
-    modules.extend(["dockerfile", "docker_compose", "readme"])
+    modules.extend(["dockerfile", "docker_compose", "readme", "project_structure"])
     return modules

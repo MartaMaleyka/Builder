@@ -67,6 +67,17 @@ If the user said 'me parece bien dame otras' or similar,
 it means give different follow-up questions on NEW topics,
 not repeat the same one.
 
+CRITICAL: The user's FIRST message contains vital information.
+Before asking ANYTHING, read it carefully and extract:
+- who the users are
+- what the app does
+- any tech preferences mentioned
+
+NEVER ask about something the user already mentioned.
+If the user said 'mi equipo' they already answered who the users are.
+If the user said 'React' they already answered the stack.
+Your first question must be about something NOT yet mentioned.
+
 Structured output rules:
 - When needs_more_info is true: questions must be a list with EXACTLY ONE string
   containing your full conversational reply (acknowledgment + one natural question).
@@ -121,7 +132,18 @@ class ClarifyAgent:
             f"\nTopics already covered: {covered}\n"
             "Do NOT ask about these again. Pick the next uncovered topic."
         )
-        system = SystemMessage(content=SYSTEM_PROMPT + budget_line + topics_line)
+        all_user_text = " ".join(
+            m.content
+            for m in self._history
+            if hasattr(m, "type") and m.type == "human" and isinstance(m.content, str)
+        )
+        dynamic_context = (
+            f"\nWhat the user already told you: {all_user_text[:500]}\n"
+            "Do NOT ask about any of this again."
+        )
+        system = SystemMessage(
+            content=SYSTEM_PROMPT + dynamic_context + budget_line + topics_line
+        )
         messages: list[BaseMessage] = [system, *self._history]
 
         print(f"[ClarifyAgent] Historial enviado al LLM: {len(messages)} mensajes")
