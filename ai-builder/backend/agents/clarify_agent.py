@@ -13,41 +13,73 @@ load_dotenv()
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
 MAX_QUESTIONS = 5
+TOPICS = ["users", "features", "scale", "tech", "integrations"]
 
-SYSTEM_PROMPT = """
-Eres un arquitecto de software senior. Tu trabajo es entender
-completamente la idea del usuario antes de generar cualquier documento.
+SYSTEM_PROMPT = """You are a friendly and experienced software consultant.
+Your goal is to understand what the user wants to build through
+natural conversation — NOT a formal questionnaire.
 
-REGLAS ESTRICTAS:
-1. En el primer mensaje SIEMPRE responde con needs_more_info: true
-   y entre 2 y 3 preguntas. Sin excepciones.
-2. Solo emites context (needs_more_info: false) cuando conoces:
-   - Qué tipo de app es
-   - Quiénes son los usuarios
-   - Cuáles son las 3-5 funcionalidades principales
-   - Qué stack tecnológico prefiere (o si no tiene preferencia)
-   - Qué escala espera (pequeña/mediana/grande)
-3. Nunca hagas más de 5 preguntas en total sumando todos los turnos.
-4. Las preguntas deben ser concretas y útiles, no genéricas.
-5. Cuando tengas toda la información, emite el context completo.
+TONE RULES:
+- Be warm, conversational and encouraging
+- React to what the user says before asking anything
+- Never list multiple questions as bullets
+- Ask ONE question at a time, naturally embedded in a sentence
+- Show genuine interest: "Oh interesting, a tool for X..."
+- If the user gives a vague answer, gently dig deeper with curiosity
+- Speak in the same language the user uses (Spanish/English)
 
-NUNCA concluyas en el primer mensaje aunque el usuario haya dado
-mucha información. Siempre confirma al menos stack y escala.
+CONVERSATION FLOW:
+Turn 1: The user describes their idea (even vaguely)
+  → Acknowledge what they said enthusiastically
+  → Ask the single most important missing piece
+  → Example: "¡Qué buena idea! Para entenderte mejor —
+    ¿quién usaría esta app, tus propios clientes o tu equipo interno?"
 
-Context fields (required when needs_more_info is false):
-- app_type: one of web_app, mobile_app, api, cli, complex_system
-- description: clear summary of the product
-- core_features: list of main features
-- tech_preferences: technologies the user mentioned, or null
-- target_users: who will use the product
-- scale_expectation: small, medium, or large
-- integrations: external services/APIs mentioned, or empty list
+Turn 2-4: Keep clarifying naturally, one topic per turn:
+  Priority order of what you need to know:
+  1. Who are the users and what problem does it solve for them
+  2. The 3-5 core features (most important)
+  3. Scale: how many users, how much data
+  4. Tech preferences (ask casually: "¿tienes alguna preferencia
+     de tecnología o te dejo proponer lo que mejor encaje?")
+
+Turn 5 (max): If you have enough context, wrap up warmly:
+  "¡Perfecto, creo que tengo todo lo que necesito para armar
+   el documento! Dame un momento..."
+  Then emit needs_more_info: false with the complete context.
+
+NEVER:
+- Ask more than 1 question per turn
+- Use bullet points or numbered lists in your response
+- Ask generic questions like "what type of app" if they already said "web"
+- Repeat information the user already gave you
+- Sound like a form or survey
+
+ALWAYS:
+- Reference what the user just said in your response
+- Make the user feel heard and understood
+- Keep responses under 3 sentences before the question
+
+CRITICAL: Before responding, read ALL previous messages in the
+conversation. Never ask something that was already answered.
+Never repeat a question you already asked.
+If the user said 'me parece bien dame otras' or similar,
+it means give different follow-up questions on NEW topics,
+not repeat the same one.
+
+Structured output rules:
+- When needs_more_info is true: questions must be a list with EXACTLY ONE string
+  containing your full conversational reply (acknowledgment + one natural question).
+- When needs_more_info is false: fill context with:
+  app_type (web_app|mobile_app|api|cli|complex_system), description, core_features,
+  tech_preferences (or null), target_users, scale_expectation (small|medium|large),
+  integrations (list, may be empty).
 """
 
-_FIRST_TURN_FALLBACK_QUESTIONS = [
-    "¿Qué stack tecnológico prefieres para frontend, backend y base de datos?",
-    "¿Qué escala esperas para el proyecto: pequeña, mediana o grande?",
-]
+_FIRST_TURN_FALLBACK = (
+    "¡Qué buena idea! Para entenderte mejor, "
+    "¿quién usaría esta app principalmente?"
+)
 
 
 class ClarifyAgent:
@@ -69,27 +101,47 @@ class ClarifyAgent:
 
     def chat(self, user_message: str) -> ClarifyResponse:
         """Process a user message and return clarification status or final context."""
+        # Opción A: agregar usuario ANTES de invocar; messages = [system] + history
         self._history.append(HumanMessage(content=user_message))
-        is_first_turn = self._user_turn_count() == 1
 
         if self._questions_asked >= MAX_QUESTIONS:
-            return self._force_complete_context()
+            response = self._force_complete_context()
+            self._history.append(
+                AIMessage(content=self._serialize_assistant_turn(response))
+            )
+            return response
 
         remaining = MAX_QUESTIONS - self._questions_asked
         budget_line = (
             f"\nPreguntas ya hechas en esta sesión: {self._questions_asked}. "
             f"Puedes hacer como máximo {remaining} pregunta(s) más en total."
         )
-        system = SystemMessage(content=SYSTEM_PROMPT + budget_line)
+        covered = self._covered_topics()
+        topics_line = (
+            f"\nTopics already covered: {covered}\n"
+            "Do NOT ask about these again. Pick the next uncovered topic."
+        )
+        system = SystemMessage(content=SYSTEM_PROMPT + budget_line + topics_line)
         messages: list[BaseMessage] = [system, *self._history]
 
+        print(f"[ClarifyAgent] Historial enviado al LLM: {len(messages)} mensajes")
+        for i, m in enumerate(messages):
+            msg_type = getattr(m, "type", type(m).__name__)
+            print(f"  [{i}] {msg_type}: {str(m.content)[:80]}")
+
         llm_output: AgentLLMOutput = self._llm.invoke(messages)
+        is_first_turn = self._user_turn_count() == 1
         response = self._build_response(llm_output, is_first_turn=is_first_turn)
 
         self._history.append(
             AIMessage(content=self._serialize_assistant_turn(response))
         )
         return response
+
+    def _covered_topics(self) -> list[str]:
+        """Infer which clarification topics already appear in the conversation."""
+        history_text = " ".join(str(m.content) for m in self._history).lower()
+        return [topic for topic in TOPICS if topic in history_text]
 
     def _user_turn_count(self) -> int:
         return sum(1 for msg in self._history if isinstance(msg, HumanMessage))
@@ -98,20 +150,18 @@ class ClarifyAgent:
         self, llm_output: AgentLLMOutput, *, is_first_turn: bool
     ) -> ClarifyResponse:
         """Apply business rules on top of the raw LLM structured output."""
-        if is_first_turn:
-            questions = llm_output.questions[:3]
-            if len(questions) < 2:
-                questions = _FIRST_TURN_FALLBACK_QUESTIONS[:3]
-            self._questions_asked += len(questions)
-            return ClarifyResponse(needs_more_info=True, questions=questions)
+        if is_first_turn or (
+            llm_output.needs_more_info and self._questions_asked < MAX_QUESTIONS
+        ):
+            if is_first_turn and not llm_output.needs_more_info:
+                llm_output.needs_more_info = True
 
-        if llm_output.needs_more_info and self._questions_asked < MAX_QUESTIONS:
-            questions = llm_output.questions[:3]
-            if not questions:
-                return self._force_complete_context()
+            question = llm_output.questions[0] if llm_output.questions else ""
+            if not question.strip():
+                question = _FIRST_TURN_FALLBACK
 
-            self._questions_asked += len(questions)
-            return ClarifyResponse(needs_more_info=True, questions=questions)
+            self._questions_asked += 1
+            return ClarifyResponse(needs_more_info=True, questions=[question])
 
         if llm_output.context is not None:
             return ClarifyResponse(
@@ -137,16 +187,15 @@ class ClarifyAgent:
             )
         )
         context: ClarifyContext = fallback_llm.invoke([system, *self._history])
-        response = ClarifyResponse(needs_more_info=False, context=context)
-        self._history.append(
-            AIMessage(content=self._serialize_assistant_turn(response))
-        )
-        return response
+        return ClarifyResponse(needs_more_info=False, context=context)
 
     @staticmethod
     def _serialize_assistant_turn(response: ClarifyResponse) -> str:
         if response.needs_more_info:
-            return "Questions: " + " | ".join(response.questions)
+            return response.questions[0] if response.questions else "Clarifying..."
         if response.context:
-            return f"Context ready: {response.context.description[:120]}"
+            return (
+                "¡Perfecto, creo que tengo todo lo que necesito para armar "
+                f"el documento! {response.context.description[:80]}"
+            )
         return "Clarification complete."

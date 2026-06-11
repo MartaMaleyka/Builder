@@ -60,7 +60,9 @@ export function DataModelTable({ entities, onChange }) {
             </td>
             <td className="py-2 pr-3">
               <EditableText
-                value={entity.fields.join(", ")}
+                value={entity.fields
+                  .map((f) => (typeof f === "string" ? f : `${f.name}:${f.type}`))
+                  .join(", ")}
                 onChange={(v) => update(i, "fields", v)}
               />
             </td>

@@ -95,11 +95,46 @@ class ProposedStack(BaseModel):
     extras: list[str] = Field(default_factory=list)
 
 
+class ArchitecturePattern(str, Enum):
+    """Application architecture pattern."""
+
+    MVC = "MVC"
+    CLEAN_ARCHITECTURE = "Clean Architecture"
+    LAYERED = "Layered"
+
+
+class TechnicalSpec(BaseModel):
+    """Technical specifications inferred for the project."""
+
+    architecture_pattern: ArchitecturePattern
+    folder_structure: str
+    naming_conventions: str
+    error_handling_strategy: str
+    state_management: str
+
+
+class FrontendComponent(BaseModel):
+    """Frontend UI component specification."""
+
+    name: str
+    description: str
+    props: list[str] = Field(default_factory=list)
+    route: Optional[str] = None
+
+
+class DatabaseField(BaseModel):
+    """Database column with type and constraints."""
+
+    name: str
+    type: str
+    constraints: list[str] = Field(default_factory=list)
+
+
 class DataEntity(BaseModel):
     """Primary data entity in the system."""
 
     name: str
-    fields: list[str]
+    fields: list[DatabaseField]
     relationships: list[str] = Field(default_factory=list)
 
 
@@ -132,7 +167,9 @@ class PRDDocument(BaseModel):
     functional_requirements: list[Requirement]
     non_functional_requirements: list[Requirement]
     proposed_stack: ProposedStack
+    technical_specifications: TechnicalSpec
     data_model: list[DataEntity]
+    frontend_components: list[FrontendComponent] = Field(default_factory=list)
     api_endpoints: list[APIEndpoint] = Field(default_factory=list)
     milestones: list[Milestone]
 

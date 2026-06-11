@@ -39,6 +39,7 @@ generation_store: dict[str, GenerationResult] = {}
 
 _TEMPLATE_MODULES = frozenset({"dockerfile", "docker_compose", "readme"})
 _STRUCTURE_MODULE = "project_structure"
+_SEED_MODULE = "seed"
 _MODULE_HINTS: dict[str, tuple[str, ...]] = {
     "data_models": ("model", "schema", "entity", "migration", "prisma", "/db/", "database"),
     "backend_core": ("route", "controller", "service", "handler", "router", "/api/", "backend/", "server"),
@@ -102,9 +103,45 @@ class CodeGenerator:
 
             generation_store[session_id] = result.model_copy(deep=True)
 
+        self._apply_fixed_files(result, prd)
         finalize_result(result)
         generation_store[session_id] = result.model_copy(deep=True)
         return result
+
+    def _apply_fixed_files(self, result: GenerationResult, prd: PRDDocument) -> None:
+        """Overwrite or inject canonical files that must not come from the LLM."""
+        fixed = self._templates.get_fixed_files(prd)
+        for path, content in fixed.items():
+            existing: Optional[GeneratedFile] = None
+            for module in result.modules:
+                for file in module.files:
+                    if file.path == path:
+                        existing = file
+                        break
+                if existing:
+                    break
+
+            if existing:
+                existing.content = content
+                continue
+
+            if path.startswith("frontend"):
+                target_module = "frontend_core"
+            elif path.startswith("backend"):
+                target_module = "backend_core"
+            elif path == "docker-compose.yml":
+                target_module = "docker_compose"
+            else:
+                target_module = "dockerfile"
+            for module in result.modules:
+                if module.module_name == target_module:
+                    module.files.append(
+                        GeneratedFile(path=path, content=content, module=target_module)
+                    )
+                    break
+
+        result.total_files = sum(len(m.files) for m in result.modules)
+        print(f"[CodeGenerator] Applied {len(fixed)} fixed template files")
 
     async def _generate_module(
         self,
@@ -117,7 +154,29 @@ class CodeGenerator:
             return await self._generate_template_module(module_name, prd, context, completed)
         if module_name == _STRUCTURE_MODULE:
             return await self._generate_structure_module(prd, context, completed)
+        if module_name == _SEED_MODULE:
+            return await self._generate_seed_module(prd, context, completed)
         return await self._generate_files_one_by_one(module_name, prd, completed)
+
+    async def _generate_seed_module(
+        self,
+        prd: PRDDocument,
+        context: ClarifyContext,
+        completed: list[ModuleStatus],
+    ) -> list[ModuleFileOutput]:
+        system = SystemMessage(content=build_module_prompt(_SEED_MODULE, prd, context))
+        context_msgs = build_context_messages(completed)
+        user = HumanMessage(
+            content=(
+                f"Generate seed data for '{prd.title}' ({context.app_type.value}). "
+                "Entities: "
+                + ", ".join(entity.name for entity in prd.data_model)
+                + ". Return backend/src/config/seed.js and backend/src/config/init.sql."
+            )
+        )
+        output = await self._llm.generate_files([system, *context_msgs, user])
+        print(f"[CodeGenerator] seed module: {len(output.files)} files")
+        return output.files
 
     async def _generate_structure_module(
         self,

@@ -1,22 +1,21 @@
 services:
-{% for service in services %}
-  {{ service.name }}:
-    image: {{ service.image }}
-    build: .
-{% if service.ports %}
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     ports:
-{% for port in service.ports %}
-      - "{{ port }}"
-{% endfor %}
-{% endif %}
-{% if service.env_vars %}
+      - "3001:3001"
     environment:
-{% for key, value in service.env_vars.items() %}
-      {{ key }}: "{{ value }}"
-{% endfor %}
-{% endif %}
-    restart: unless-stopped
-{% if not loop.last %}
+      PORT: "3001"
+      NODE_ENV: production
 
-{% endif %}
-{% endfor %}
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    environment:
+      VITE_API_URL: http://localhost:3001

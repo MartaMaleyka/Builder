@@ -34,9 +34,28 @@ Output must satisfy these constraints:
   ser React + Astro + Tailwind, no React.js genérico. Si dijo Node.js, el backend DEBE
   ser Node.js + Express, no FastAPI. Nunca sustituir tecnologías por otras aunque te
   parezcan mejores. Si tech_preferences es null, entonces propones el stack más adecuado.
-- data_model: main entities with fields and relationships
-- api_endpoints: include relevant REST endpoints if app_type is api, web_app, or complex_system;
-  use empty list for cli or pure mobile_app without backend
+- technical_specifications: ALWAYS infer even if the user did not mention them:
+    architecture_pattern: one of "MVC", "Clean Architecture", "Layered"
+    folder_structure: proposed folder tree as a text description
+    naming_conventions: e.g. snake_case backend, camelCase frontend, PascalCase components
+    error_handling_strategy: how API and UI handle errors (HTTP codes, user messages, logging)
+    state_management: how frontend state is managed (Context, Redux, local state, etc.)
+- data_model: main entities; each field is a DatabaseField object with:
+    name, type (SQL/ORM type), constraints (NOT NULL, UNIQUE, FK, INDEX, etc.)
+  Include suggested indexes in constraints where appropriate.
+- frontend_components: minimum 5 components for web/mobile apps; each with:
+    name, description, props (list of prop names), route (path or null for layout-only)
+  Skip or use empty list only for api/cli app_type without UI.
+- api_endpoints: NEVER leave empty for api, web_app, or complex_system.
+  For EACH DataEntity in data_model, generate at minimum these CRUD endpoints
+  (use plural lowercase entity name in path):
+    GET    /api/{{entity}}          — list with pagination
+    GET    /api/{{entity}}/{{id}}   — detail
+    POST   /api/{{entity}}          — create
+    PUT    /api/{{entity}}/{{id}}   — update
+    DELETE /api/{{entity}}/{{id}}   — delete
+  Add business-specific endpoints beyond CRUD where the app requires them.
+  Use empty list only for cli or pure mobile_app without backend.
 - milestones: 3-4 phases with phase number, name, deliverables, estimated_weeks
 
 Scale deliverables to {context.scale_expectation.value} scale expectations.
@@ -51,4 +70,5 @@ Scale deliverables to {context.scale_expectation.value} scale expectations.
 - scale_expectation: {context.scale_expectation.value}
 - integrations: {integrations}
 
-Be specific and actionable. Do not invent major features beyond the context."""
+Be specific and actionable. Do not invent major features beyond the context.
+Infer technical_specifications, frontend_components, and full api_endpoints automatically."""
