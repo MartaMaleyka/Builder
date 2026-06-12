@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections.abc import Callable
@@ -122,28 +123,47 @@ class CodeGenerator:
         return result
 
     async def _run_frontend_qa(self, result: GenerationResult, prd: PRDDocument) -> None:
+        """QA only the structurally important files: App and page components.
+
+        Utility components (StatusBadge, SkeletonLoader, etc.) are small and
+        predictable — QA-ing them adds minutes without meaningful gain.
+        """
         for module in result.modules:
             if module.module_name != "frontend_core":
                 continue
-            logger.info("Running QA on frontend files...")
-            qa_agent = self._qa_agent
-            improved_files: list[GeneratedFile] = []
+
+            qa_targets = []
+            passthrough = []
             for file in module.files:
+                is_important = any(
+                    p in file.path
+                    for p in ("/App.", "/pages/", "Page.")
+                )
+                if (
+                    is_important
+                    and file.path.endswith((".jsx", ".tsx"))
+                    and len(file.content.strip()) > 200
+                ):
+                    qa_targets.append(file)
+                else:
+                    passthrough.append(file)
+
+            logger.info(
+                "QA: %d important files, %d skipped", len(qa_targets), len(passthrough)
+            )
+
+            # Run QA concurrently — Ollama serialises internally but asyncio
+            # overhead is still reduced and responses stream as they finish.
+            async def _qa_one(f: GeneratedFile) -> GeneratedFile:
                 try:
-                    if (
-                        file.path.endswith((".jsx", ".tsx"))
-                        and file.content
-                        and len(file.content.strip()) > 100
-                    ):
-                        improved_file = await qa_agent.process(file, prd)
-                        improved_files.append(improved_file)
-                    else:
-                        improved_files.append(file)
-                except Exception as e:
-                    logger.warning("QA SKIP %s: %s", file.path, e)
-                    improved_files.append(file)
-            module.files = improved_files
-            logger.info("QA complete: %d files processed", len(improved_files))
+                    return await self._qa_agent.process(f, prd, max_iterations=1)
+                except Exception as exc:
+                    logger.warning("QA SKIP %s: %s", f.path, exc)
+                    return f
+
+            improved = await asyncio.gather(*[_qa_one(f) for f in qa_targets])
+            module.files = list(improved) + passthrough
+            logger.info("QA complete: %d files processed", len(improved))
             break
 
     @staticmethod
@@ -386,22 +406,24 @@ class CodeGenerator:
         context: ClarifyContext,
         completed: list[ModuleStatus],
     ) -> list[ModuleFileOutput]:
-        if module_name == "frontend_core":
-            logger.info("Using frontend LLM for frontend_core")
-
         paths = self._planned_paths_for_module(module_name, prd)
         if not paths:
             logger.warning("No planned paths for %s, skipping.", module_name)
             return []
 
         context_str = self._context_summary(completed)
-        files: list[ModuleFileOutput] = []
-        for path in paths:
-            logger.info("Generating %s (%s)", path, module_name)
-            content = await self._generate_single_file(path, context_str, prd)
-            if content.strip():
-                files.append(ModuleFileOutput(path=path, content=content))
-        return files
+        logger.info("Generating %d files for %s (parallel)", len(paths), module_name)
+
+        async def _gen(path: str) -> ModuleFileOutput | None:
+            try:
+                content = await self._generate_single_file(path, context_str, prd)
+                return ModuleFileOutput(path=path, content=content) if content.strip() else None
+            except Exception as exc:
+                logger.warning("Failed to generate %s: %s", path, exc)
+                return None
+
+        results = await asyncio.gather(*[_gen(p) for p in paths])
+        return [r for r in results if r is not None]
 
     async def _generate_single_file(
         self,

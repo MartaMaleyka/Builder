@@ -22,7 +22,7 @@ T = TypeVar("T", bound=BaseModel)
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 CODE_MODEL = "qwen2.5-coder:7b"
 TEXT_MODEL = "qwen2.5:7b"
-FRONTEND_MODEL = "qwen2.5:14b"
+FRONTEND_MODEL = "qwen2.5-coder:7b"   # same as code_llm — faster, equally good for JSX
 
 text_llm = ChatOllama(
     model=TEXT_MODEL,
