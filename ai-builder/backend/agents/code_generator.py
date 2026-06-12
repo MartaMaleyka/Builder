@@ -135,12 +135,12 @@ class CodeGenerator:
             qa_targets = []
             passthrough = []
             for file in module.files:
-                is_important = any(
-                    p in file.path
-                    for p in ("/App.", "/pages/", "Page.")
-                )
+                # App.jsx is a router/layout — it correctly has no loading or empty states.
+                # Utility components (StatusBadge, Skeleton…) are small and predictable.
+                # Only data-fetching page components benefit from QA.
+                is_page = "/pages/" in file.path or file.path.endswith("Page.jsx") or file.path.endswith("Page.tsx")
                 if (
-                    is_important
+                    is_page
                     and file.path.endswith((".jsx", ".tsx"))
                     and len(file.content.strip()) > 200
                 ):
