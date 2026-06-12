@@ -1,12 +1,32 @@
-.DS_Store
-.env
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
 .venv/
 venv/
+env/
+.Python
+
+# Environment files — never commit secrets
+.env
+.env.local
+.env.*.local
+
+# Node
 node_modules/
 dist/
-__pycache__/
-*.pyc
-*.pyo
-.Python
-.idea/
+.cache/
+
+# macOS
+.DS_Store
+.AppleDouble
+
+# IDEs
 .vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/

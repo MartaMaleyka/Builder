@@ -15,17 +15,19 @@ async function request(path, options = {}) {
   return res;
 }
 
-export async function sendMessage(sessionId, message) {
+export async function sendMessage(sessionId, message, signal) {
   return request("/clarify", {
     method: "POST",
     body: JSON.stringify({ session_id: sessionId, message }),
+    signal,
   });
 }
 
-export async function generatePRD(sessionId) {
+export async function generatePRD(sessionId, signal) {
   return request("/prd/generate", {
     method: "POST",
     body: JSON.stringify({ session_id: sessionId }),
+    signal,
   });
 }
 
@@ -33,7 +35,7 @@ export async function getPRD(sessionId) {
   return request(`/prd/${sessionId}`);
 }
 
-export async function approvePRD(sessionId, prd) {
+export async function approvePRD(sessionId, prd, signal) {
   await request("/prd/approve", {
     method: "POST",
     body: JSON.stringify({
@@ -41,6 +43,7 @@ export async function approvePRD(sessionId, prd) {
       approved: true,
       edited_prd: prd,
     }),
+    signal,
   });
 }
 

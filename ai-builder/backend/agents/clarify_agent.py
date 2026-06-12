@@ -1,5 +1,6 @@
 """Clarify Agent: gathers requirements through conversational follow-up."""
 
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -10,10 +11,42 @@ from models.schemas import AgentLLMOutput, ClarifyContext, ClarifyResponse
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
 MAX_QUESTIONS = 5
-TOPICS = ["users", "features", "scale", "tech", "integrations"]
+
+# Bilingual keyword mapping so covered topics are detected in both English and Spanish
+_TOPIC_KEYWORDS: dict[str, list[str]] = {
+    "users": [
+        "users", "user", "usuarios", "usuario", "cliente", "clientes",
+        "equipo", "team", "persona", "personas", "quien usa", "quién usa",
+        "mi equipo", "nuestros", "empleado", "empleados",
+    ],
+    "features": [
+        "features", "feature", "funcionalidad", "funcionalidades",
+        "característica", "características", "módulo", "módulos",
+        "necesita", "necesitan", "permite", "capacidad", "función principal",
+    ],
+    "scale": [
+        "scale", "escalabilidad", "escala", "tamaño", "concurrentes",
+        "traffic", "tráfico", "pequeña", "mediana", "grande", "usuarios simultáneos",
+        "carga", "mil usuarios", "cien usuarios", "millones",
+    ],
+    "tech": [
+        "tech", "tecnología", "tecnologia", "stack", "react", "vue",
+        "angular", "node", "python", "fastapi", "django", "express",
+        "laravel", "rails", "sql", "postgres", "mysql", "mongo",
+        "preferencia", "preferencias", "typescript", "nextjs", "nuxt",
+    ],
+    "integrations": [
+        "integrations", "integraciones", "integration", "integración",
+        "api", "webhook", "third-party", "terceros", "externo", "externos",
+        "stripe", "paypal", "google", "github", "slack", "whatsapp",
+        "no hay integracion", "sin integracion", "ninguna integracion",
+    ],
+}
 
 SYSTEM_PROMPT = """You are a friendly and experienced software consultant.
 Your goal is to understand what the user wants to build through
@@ -105,6 +138,12 @@ class ClarifyAgent:
             base_url=OLLAMA_BASE_URL,
             temperature=0.3,
         ).with_structured_output(AgentLLMOutput)
+        # Separate LLM for forced completion — lower temperature, structured to ClarifyContext
+        self._fallback_llm = ChatOllama(
+            model="qwen2.5:7b",
+            base_url=OLLAMA_BASE_URL,
+            temperature=0.2,
+        ).with_structured_output(ClarifyContext)
 
     @property
     def questions_asked(self) -> int:
@@ -112,7 +151,6 @@ class ClarifyAgent:
 
     def chat(self, user_message: str) -> ClarifyResponse:
         """Process a user message and return clarification status or final context."""
-        # Opción A: agregar usuario ANTES de invocar; messages = [system] + history
         self._history.append(HumanMessage(content=user_message))
 
         if self._questions_asked >= MAX_QUESTIONS:
@@ -146,10 +184,10 @@ class ClarifyAgent:
         )
         messages: list[BaseMessage] = [system, *self._history]
 
-        print(f"[ClarifyAgent] Historial enviado al LLM: {len(messages)} mensajes")
-        for i, m in enumerate(messages):
-            msg_type = getattr(m, "type", type(m).__name__)
-            print(f"  [{i}] {msg_type}: {str(m.content)[:80]}")
+        logger.info(
+            "[%s] Sending %d messages to LLM (q=%d)",
+            self.session_id, len(messages), self._questions_asked,
+        )
 
         llm_output: AgentLLMOutput = self._llm.invoke(messages)
         is_first_turn = self._user_turn_count() == 1
@@ -161,9 +199,13 @@ class ClarifyAgent:
         return response
 
     def _covered_topics(self) -> list[str]:
-        """Infer which clarification topics already appear in the conversation."""
+        """Detect which clarification topics appear in the conversation (bilingual)."""
         history_text = " ".join(str(m.content) for m in self._history).lower()
-        return [topic for topic in TOPICS if topic in history_text]
+        return [
+            topic
+            for topic, keywords in _TOPIC_KEYWORDS.items()
+            if any(kw in history_text for kw in keywords)
+        ]
 
     def _user_turn_count(self) -> int:
         return sum(1 for msg in self._history if isinstance(msg, HumanMessage))
@@ -195,12 +237,7 @@ class ClarifyAgent:
 
     def _force_complete_context(self) -> ClarifyResponse:
         """Emit best-effort context when the question budget is exhausted."""
-        fallback_llm = ChatOllama(
-            model="qwen2.5:7b",
-            base_url=OLLAMA_BASE_URL,
-            temperature=0.2,
-        ).with_structured_output(ClarifyContext)
-
+        logger.info("[%s] Forcing context completion", self.session_id)
         system = SystemMessage(
             content=(
                 "Based on the conversation, produce the best possible structured "
@@ -208,7 +245,7 @@ class ClarifyAgent:
                 "was discussed; leave tech_preferences null if unknown."
             )
         )
-        context: ClarifyContext = fallback_llm.invoke([system, *self._history])
+        context: ClarifyContext = self._fallback_llm.invoke([system, *self._history])
         return ClarifyResponse(needs_more_info=False, context=context)
 
     @staticmethod

@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getCodeStatus, startCodeGen } from "../api/client";
 
+const POLL_SAFETY_MAX = 200; // stop polling after ~10 min as a safety valve
+
 export function useGeneration(sessionId) {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [starting, setStarting] = useState(false);
   const startedRef = useRef(false);
+  const pollCountRef = useRef(0);
 
   const kickoff = useCallback(async () => {
     if (startedRef.current) return;
     startedRef.current = true;
+    pollCountRef.current = 0;
     setStarting(true);
     setError(null);
     try {
@@ -28,20 +32,28 @@ export function useGeneration(sessionId) {
     kickoff();
   }, [kickoff]);
 
+  // Adaptive polling via setTimeout: fast at start, backs off over time.
+  // Re-schedules on every result change so it stops automatically when
+  // status leaves "in_progress".
   useEffect(() => {
     if (!startedRef.current || !result || result.status !== "in_progress") return;
+    if (pollCountRef.current >= POLL_SAFETY_MAX) return;
 
-    const id = setInterval(async () => {
+    const count = pollCountRef.current;
+    const delay = count < 4 ? 1000 : count < 12 ? 2000 : 3500;
+
+    const id = setTimeout(async () => {
+      pollCountRef.current += 1;
       try {
         const data = await getCodeStatus(sessionId);
         setResult(data);
       } catch (err) {
         setError(err.message);
       }
-    }, 2000);
+    }, delay);
 
-    return () => clearInterval(id);
-  }, [sessionId, result?.status]);
+    return () => clearTimeout(id);
+  }, [sessionId, result]);
 
   const retry = useCallback(async () => {
     startedRef.current = false;

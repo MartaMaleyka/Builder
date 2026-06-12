@@ -1,11 +1,15 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { approvePRD, rejectPRD } from "../api/client";
 import PRDSection, { EditableList, EditableText } from "../components/PRDSection";
-import { DataModelTable, EndpointsTable, UserStoriesTable } from "./PRDTables";
+import { useToast } from "../context/ToastContext";
+import { DataModelTable, EndpointsTable, RequirementsTable, UserStoriesTable } from "./PRDTables";
 
-export default function PRDView({ sessionId, prd: initialPRD, onApprove, onReject }) {
+export default function PRDView({ sessionId, prd: initialPRD, onApprove, onReject, onBackToChat }) {
   const [prd, setPrd] = useState(initialPRD);
   const [saving, setSaving] = useState(false);
+  const [rejecting, setRejecting] = useState(false);
+  const approveAbortRef = useRef(null);
+  const { show: showToast } = useToast();
 
   const patch = (field, value) => setPrd((prev) => ({ ...prev, [field]: value }));
   const patchStack = (field, value) =>
@@ -13,22 +17,28 @@ export default function PRDView({ sessionId, prd: initialPRD, onApprove, onRejec
 
   const handleApprove = async () => {
     setSaving(true);
+    approveAbortRef.current = new AbortController();
     try {
-      await approvePRD(sessionId, prd);
+      await approvePRD(sessionId, prd, approveAbortRef.current.signal);
+      showToast("PRD aprobado, iniciando construcción...", "success");
       onApprove();
     } catch (err) {
-      alert(err.message);
+      if (err.name === "AbortError") return;
+      showToast(err.message || "Error al aprobar el PRD", "error");
     } finally {
       setSaving(false);
     }
   };
 
   const handleReject = async () => {
+    setRejecting(true);
     try {
       await rejectPRD(sessionId);
       onReject();
     } catch (err) {
-      alert(err.message);
+      showToast(err.message || "Error al rechazar el PRD", "error");
+    } finally {
+      setRejecting(false);
     }
   };
 
@@ -36,16 +46,37 @@ export default function PRDView({ sessionId, prd: initialPRD, onApprove, onRejec
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6">
-      <header className="mb-6 flex items-center justify-between">
+      <header className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold">Product Requirements Document</h1>
-          <p className="text-sm text-secondary">Revisa y edita antes de construir.</p>
+          <p className="text-sm text-secondary">
+            Haz clic en cualquier campo para editarlo antes de construir.
+          </p>
+          {onBackToChat && (
+            <button
+              type="button"
+              onClick={onBackToChat}
+              className="mt-2 flex items-center gap-1 text-xs text-secondary hover:text-accent transition-colors"
+            >
+              ← Volver al Chat
+            </button>
+          )}
         </div>
-        <div className="flex gap-2">
-          <button type="button" onClick={handleReject} className="rounded-lg border border-border px-4 py-2 text-sm text-secondary hover:border-error hover:text-error">
-            Rechazar / volver
+        <div className="flex shrink-0 gap-2">
+          <button
+            type="button"
+            onClick={handleReject}
+            disabled={rejecting || saving}
+            className="rounded-lg border border-border px-4 py-2 text-sm text-secondary hover:border-error hover:text-error disabled:opacity-40"
+          >
+            {rejecting ? "Rechazando..." : "Rechazar PRD"}
           </button>
-          <button type="button" onClick={handleApprove} disabled={saving} className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50">
+          <button
+            type="button"
+            onClick={handleApprove}
+            disabled={saving || rejecting}
+            className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+          >
             {saving ? "Aprobando..." : "Aprobar y construir →"}
           </button>
         </div>
@@ -69,15 +100,40 @@ export default function PRDView({ sessionId, prd: initialPRD, onApprove, onRejec
           <UserStoriesTable stories={prd.user_stories} onChange={(v) => patch("user_stories", v)} />
         </PRDSection>
 
+        <PRDSection title="Functional Requirements">
+          <RequirementsTable
+            requirements={prd.functional_requirements}
+            onChange={(v) => patch("functional_requirements", v)}
+          />
+        </PRDSection>
+
+        <PRDSection title="Non-Functional Requirements">
+          <RequirementsTable
+            requirements={prd.non_functional_requirements}
+            onChange={(v) => patch("non_functional_requirements", v)}
+          />
+        </PRDSection>
+
         <PRDSection title="Proposed Stack">
           <div className="flex flex-wrap gap-2">
-            {Object.entries(stack).filter(([k]) => k !== "extras").map(([key, val]) => (
-              <span key={key} className="rounded-lg border border-border bg-bg px-3 py-1 text-xs">
-                <span className="text-secondary">{key}: </span>
-                <EditableText value={val} onChange={(v) => patchStack(key, v)} className="inline px-0 py-0" />
-              </span>
-            ))}
+            {Object.entries(stack)
+              .filter(([k]) => k !== "extras")
+              .map(([key, val]) => (
+                <span key={key} className="rounded-lg border border-border bg-bg px-3 py-1 text-xs">
+                  <span className="text-secondary">{key}: </span>
+                  <EditableText value={val} onChange={(v) => patchStack(key, v)} className="inline px-0 py-0" />
+                </span>
+              ))}
           </div>
+          {stack.extras?.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {stack.extras.map((extra, i) => (
+                <span key={i} className="rounded-full bg-surface px-2 py-0.5 text-xs text-secondary">
+                  {extra}
+                </span>
+              ))}
+            </div>
+          )}
         </PRDSection>
 
         <PRDSection title="Data Model">
@@ -91,13 +147,17 @@ export default function PRDView({ sessionId, prd: initialPRD, onApprove, onRejec
         <PRDSection title="Milestones">
           <div className="grid gap-3 sm:grid-cols-2">
             {prd.milestones.map((ms, i) => (
-              <div key={i} className="rounded-lg border border-border bg-bg p-4">
+              <div key={ms.phase} className="rounded-lg border border-border bg-bg p-4">
                 <p className="text-xs text-secondary">Fase {ms.phase}</p>
-                <EditableText value={ms.name} onChange={(v) => {
-                  const next = [...prd.milestones];
-                  next[i] = { ...ms, name: v };
-                  patch("milestones", next);
-                }} className="font-medium" />
+                <EditableText
+                  value={ms.name}
+                  onChange={(v) => {
+                    const next = [...prd.milestones];
+                    next[i] = { ...ms, name: v };
+                    patch("milestones", next);
+                  }}
+                  className="font-medium"
+                />
                 <p className="mt-1 text-xs text-secondary">{ms.estimated_weeks} semanas</p>
                 <EditableList
                   items={ms.deliverables}
@@ -112,6 +172,38 @@ export default function PRDView({ sessionId, prd: initialPRD, onApprove, onRejec
             ))}
           </div>
         </PRDSection>
+      </div>
+
+      <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex gap-2">
+          {onBackToChat && (
+            <button
+              type="button"
+              onClick={onBackToChat}
+              className="rounded-lg border border-border px-4 py-2 text-sm text-secondary hover:border-accent hover:text-accent transition-colors"
+            >
+              ← Volver al Chat
+            </button>
+          )}
+        </div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={handleReject}
+            disabled={rejecting || saving}
+            className="rounded-lg border border-border px-4 py-2 text-sm text-secondary hover:border-error hover:text-error disabled:opacity-40"
+          >
+            {rejecting ? "Rechazando..." : "Rechazar PRD"}
+          </button>
+          <button
+            type="button"
+            onClick={handleApprove}
+            disabled={saving || rejecting}
+            className="rounded-lg bg-accent px-6 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+          >
+            {saving ? "Aprobando..." : "Aprobar y construir →"}
+          </button>
+        </div>
       </div>
     </div>
   );

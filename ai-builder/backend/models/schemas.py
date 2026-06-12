@@ -1,7 +1,7 @@
 """Pydantic schemas for the AI Builder API."""
 
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -191,7 +191,7 @@ class PRDApproveRequest(BaseModel):
 class PRDApproveResponse(BaseModel):
     """Response after PRD approval or rejection."""
 
-    status: str
+    status: Literal["approved", "rejected"]
     prd: Optional[PRDDocument] = None
 
 

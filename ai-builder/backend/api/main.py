@@ -1,8 +1,12 @@
 """FastAPI application for the AI Builder full pipeline."""
 
 import asyncio
+import logging
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
 from agents.clarify_agent import ClarifyAgent
@@ -23,13 +27,16 @@ from models.schemas import (
     PRDGenerateRequest,
 )
 
-app = FastAPI(
-    title="AI Software Architect Builder",
-    description="Clarify, PRD, and Code Generation API.",
-    version="0.3.0",
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
+logger = logging.getLogger(__name__)
+
+SESSION_TTL_HOURS = 24
 
 _sessions: dict[str, ClarifyAgent] = {}
+_session_timestamps: dict[str, datetime] = {}
 clarify_context_store: dict[str, ClarifyContext] = {}
 prd_store: dict[str, PRDDocument] = {}
 approved_prd_store: dict[str, PRDDocument] = {}
@@ -41,11 +48,51 @@ _code_generator = CodeGenerator(
 _generation_tasks: dict[str, asyncio.Task] = {}
 
 
+async def _cleanup_old_sessions() -> None:
+    """Remove sessions older than SESSION_TTL_HOURS every hour."""
+    while True:
+        await asyncio.sleep(3600)
+        cutoff = datetime.utcnow() - timedelta(hours=SESSION_TTL_HOURS)
+        expired = [sid for sid, ts in _session_timestamps.items() if ts < cutoff]
+        for sid in expired:
+            _sessions.pop(sid, None)
+            clarify_context_store.pop(sid, None)
+            prd_store.pop(sid, None)
+            approved_prd_store.pop(sid, None)
+            generation_store.pop(sid, None)
+            _generation_tasks.pop(sid, None)
+            _session_timestamps.pop(sid, None)
+        if expired:
+            logger.info("Cleaned up %d expired sessions", len(expired))
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    asyncio.create_task(_cleanup_old_sessions())
+    yield
+
+
+app = FastAPI(
+    title="AI Software Architect Builder",
+    description="Clarify, PRD, and Code Generation API.",
+    version="0.3.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
 def _get_or_create_agent(session_id: str) -> ClarifyAgent:
-    """One ClarifyAgent per session_id — fresh history and question counter."""
     if session_id not in _sessions:
         _sessions[session_id] = ClarifyAgent(session_id=session_id)
-        print(f"[Clarify] New session agent created: {session_id}")
+        logger.info("New session agent created: %s", session_id)
+    _session_timestamps[session_id] = datetime.utcnow()
     return _sessions[session_id]
 
 
@@ -53,7 +100,7 @@ async def _run_generation(session_id: str) -> None:
     try:
         await _code_generator.generate(session_id)
     except Exception as exc:
-        print(f"[CodeGenerator] Generation failed for {session_id}: {exc}")
+        logger.error("Generation failed for %s: %s", session_id, exc)
         existing = generation_store.get(session_id)
         if existing is not None:
             existing.status = GenerationStatus.FAILED
@@ -67,7 +114,6 @@ def health_check() -> dict[str, str]:
 
 @app.post("/clarify", response_model=ClarifyResponse)
 def clarify(request: ClarifyRequest) -> ClarifyResponse:
-    """Run one clarification turn for the given session."""
     message = request.message.strip()
     if not message:
         raise HTTPException(status_code=400, detail="message must not be empty")
@@ -84,7 +130,6 @@ def clarify(request: ClarifyRequest) -> ClarifyResponse:
 
 @app.post("/prd/generate", response_model=PRDDocument)
 async def generate_prd(request: PRDGenerateRequest) -> PRDDocument:
-    """Generate a PRD from the clarified context of a session."""
     session_id = request.session_id.strip()
     if not session_id:
         raise HTTPException(status_code=400, detail="session_id must not be empty")
@@ -103,7 +148,6 @@ async def generate_prd(request: PRDGenerateRequest) -> PRDDocument:
 
 @app.post("/prd/approve", response_model=PRDApproveResponse)
 def approve_prd(request: PRDApproveRequest) -> PRDApproveResponse:
-    """Approve or reject a generated PRD."""
     session_id = request.session_id.strip()
     if not session_id:
         raise HTTPException(status_code=400, detail="session_id must not be empty")
@@ -124,7 +168,6 @@ def approve_prd(request: PRDApproveRequest) -> PRDApproveResponse:
 
 @app.get("/prd/{session_id}", response_model=PRDDocument)
 def get_prd(session_id: str) -> PRDDocument:
-    """Retrieve the PRD for a session (approved version takes precedence)."""
     sid = session_id.strip()
     if sid in approved_prd_store:
         return approved_prd_store[sid]
@@ -137,7 +180,6 @@ def get_prd(session_id: str) -> PRDDocument:
 async def start_code_generation(
     request: CodeGenerateRequest,
 ) -> CodeGenerateStartResponse:
-    """Start background code generation for an approved PRD."""
     session_id = request.session_id.strip()
     if not session_id:
         raise HTTPException(status_code=400, detail="session_id must not be empty")
@@ -156,7 +198,6 @@ async def start_code_generation(
 
 @app.get("/code/status/{session_id}", response_model=GenerationResult)
 def code_status(session_id: str) -> GenerationResult:
-    """Poll generation progress for a session."""
     sid = session_id.strip()
     result = generation_store.get(sid)
     if result is None:
@@ -169,7 +210,6 @@ def code_status(session_id: str) -> GenerationResult:
 
 @app.get("/code/download/{session_id}")
 def code_download(session_id: str) -> Response:
-    """Download generated project as a ZIP archive."""
     sid = session_id.strip()
     result = generation_store.get(sid)
     if result is None:

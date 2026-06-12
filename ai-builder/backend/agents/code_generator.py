@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable
 from typing import Optional
@@ -35,6 +36,8 @@ from models.schemas import (
     ReadmeParams,
 )
 
+logger = logging.getLogger(__name__)
+
 generation_store: dict[str, GenerationResult] = {}
 
 _TEMPLATE_MODULES = frozenset({"dockerfile", "docker_compose", "readme"})
@@ -50,6 +53,10 @@ def _filter_valid_files(files: list[ModuleFileOutput]) -> list[ModuleFileOutput]
             continue
         valid.append(file)
     return valid
+
+
+def _is_typescript_stack(prd: PRDDocument) -> bool:
+    return "typescript" in prd.proposed_stack.frontend.lower()
 
 
 class CodeGenerator:
@@ -93,7 +100,7 @@ class CodeGenerator:
                     await self._run_frontend_qa(result, prd)
                 completed.append(self._find_module(result, module_name))
             except Exception as exc:
-                print(f"[CodeGenerator] Module {module_name} failed: {exc}")
+                logger.error("Module %s failed: %s", module_name, exc)
                 mark_module_failed(result, module_name, str(exc))
 
             generation_store[session_id] = result.model_copy(deep=True)
@@ -106,7 +113,7 @@ class CodeGenerator:
             module_status = await self._generate_project_structure_module(result, prd)
             self._apply_module_status(result, module_status)
         except Exception as exc:
-            print(f"[CodeGenerator] Module {_STRUCTURE_MODULE} failed: {exc}")
+            logger.error("Module %s failed: %s", _STRUCTURE_MODULE, exc)
             mark_module_failed(result, _STRUCTURE_MODULE, str(exc))
 
         generation_store[session_id] = result.model_copy(deep=True)
@@ -118,7 +125,7 @@ class CodeGenerator:
         for module in result.modules:
             if module.module_name != "frontend_core":
                 continue
-            print("[CodeGenerator] Running QA on frontend files...")
+            logger.info("Running QA on frontend files...")
             qa_agent = self._qa_agent
             improved_files: list[GeneratedFile] = []
             for file in module.files:
@@ -133,10 +140,10 @@ class CodeGenerator:
                     else:
                         improved_files.append(file)
                 except Exception as e:
-                    print(f"[QAAgent] SKIP {file.path}: {e}")
+                    logger.warning("QA SKIP %s: %s", file.path, e)
                     improved_files.append(file)
             module.files = improved_files
-            print(f"[CodeGenerator] QA complete: {len(improved_files)} files processed")
+            logger.info("QA complete: %d files processed", len(improved_files))
             break
 
     @staticmethod
@@ -207,10 +214,23 @@ class CodeGenerator:
         )
         tree_lines.append("")
 
+        # Derive run commands from the PRD stack instead of hardcoding npm
+        backend_stack = prd.proposed_stack.backend.lower()
+        is_python_backend = any(
+            kw in backend_stack
+            for kw in ("python", "fastapi", "django", "flask", "uvicorn")
+        )
+        if is_python_backend:
+            backend_install = "pip install -r requirements.txt"
+            backend_run = "uvicorn main:app --reload"
+        else:
+            backend_install = "npm install"
+            backend_run = "npm run seed && npm run dev"
+
         tree_lines.append("## Cómo correr el proyecto")
         tree_lines.append("```bash")
         tree_lines.append("# Backend")
-        tree_lines.append("cd backend && npm install && npm run seed && npm run dev")
+        tree_lines.append(f"cd backend && {backend_install} && {backend_run}")
         tree_lines.append("")
         tree_lines.append("# Frontend")
         tree_lines.append("cd frontend && npm install && npm run dev")
@@ -226,9 +246,9 @@ class CodeGenerator:
             module=_STRUCTURE_MODULE,
         )
 
-        print(
-            f"[CodeGenerator] project_structure manifest: {total_files} files, "
-            f"{total_lines:,} lines"
+        logger.info(
+            "project_structure manifest: %d files, %d lines",
+            total_files, total_lines,
         )
 
         return ModuleStatus(
@@ -271,7 +291,7 @@ class CodeGenerator:
                     break
 
         result.total_files = sum(len(m.files) for m in result.modules)
-        print(f"[CodeGenerator] Applied {len(fixed)} fixed template files")
+        logger.info("Applied %d fixed template files", len(fixed))
 
     async def _generate_module(
         self,
@@ -303,7 +323,7 @@ class CodeGenerator:
             )
         )
         output = await self._llm.generate_files([system, *context_msgs, user])
-        print(f"[CodeGenerator] seed module: {len(output.files)} files")
+        logger.info("seed module: %d files", len(output.files))
         return output.files
 
     def _planned_paths_for_module(
@@ -312,6 +332,9 @@ class CodeGenerator:
         prd: PRDDocument,
     ) -> list[str]:
         entities = prd.data_model
+        use_ts = _is_typescript_stack(prd)
+        ext = "tsx" if use_ts else "jsx"
+
         if module_name == "data_models":
             paths = ["backend/src/db/schema.sql", "backend/src/models/index.js"]
             for entity in entities:
@@ -333,18 +356,18 @@ class CodeGenerator:
 
         if module_name == "frontend_core":
             paths = [
-                "frontend/src/App.jsx",
-                "frontend/src/components/Layout.jsx",
-                "frontend/src/components/Sidebar.jsx",
-                "frontend/src/components/StatusBadge.jsx",
-                "frontend/src/components/SkeletonLoader.jsx",
-                "frontend/src/components/ErrorState.jsx",
-                "frontend/src/components/EmptyState.jsx",
+                f"frontend/src/App.{ext}",
+                f"frontend/src/components/Layout.{ext}",
+                f"frontend/src/components/Sidebar.{ext}",
+                f"frontend/src/components/StatusBadge.{ext}",
+                f"frontend/src/components/SkeletonLoader.{ext}",
+                f"frontend/src/components/ErrorState.{ext}",
+                f"frontend/src/components/EmptyState.{ext}",
             ]
             for entity in entities:
                 name = entity.name.replace(" ", "")
-                paths.append(f"frontend/src/pages/{name}Page.jsx")
-                paths.append(f"frontend/src/components/{name}Card.jsx")
+                paths.append(f"frontend/src/pages/{name}Page.{ext}")
+                paths.append(f"frontend/src/components/{name}Card.{ext}")
             return paths
 
         if module_name == "auth":
@@ -364,17 +387,17 @@ class CodeGenerator:
         completed: list[ModuleStatus],
     ) -> list[ModuleFileOutput]:
         if module_name == "frontend_core":
-            print("[CodeGenerator] Using qwen2.5:14b for frontend_core")
+            logger.info("Using frontend LLM for frontend_core")
 
         paths = self._planned_paths_for_module(module_name, prd)
         if not paths:
-            print(f"[CodeGenerator] No planned paths for {module_name}, skipping.")
+            logger.warning("No planned paths for %s, skipping.", module_name)
             return []
 
         context_str = self._context_summary(completed)
         files: list[ModuleFileOutput] = []
         for path in paths:
-            print(f"[CodeGenerator] Generating {path} ({module_name})")
+            logger.info("Generating %s (%s)", path, module_name)
             content = await self._generate_single_file(path, context_str, prd)
             if content.strip():
                 files.append(ModuleFileOutput(path=path, content=content))
@@ -388,8 +411,6 @@ class CodeGenerator:
     ) -> str:
         if file_path.startswith("frontend/src/"):
             llm = frontend_llm
-        elif file_path.startswith("backend/"):
-            llm = code_llm
         else:
             llm = code_llm
 
@@ -410,7 +431,13 @@ class CodeGenerator:
 
         if ext in ("jsx", "tsx"):
             parts = file_path.split("/")
-            entity_name = parts[-1].replace("Page.jsx", "").replace(".jsx", "").replace(".tsx", "")
+            entity_name = (
+                parts[-1]
+                .replace("Page.jsx", "")
+                .replace("Page.tsx", "")
+                .replace(".jsx", "")
+                .replace(".tsx", "")
+            )
             api_slug = f"{entity_name.lower()}s" if entity_name.lower() != "app" else "items"
             prompt = f"""You are a senior UI/UX frontend engineer.
 Generate the complete React component for: {file_path}
@@ -420,13 +447,13 @@ Description: {prd.overview}
 Entities: {[e.name for e in prd.data_model]}
 
 MANDATORY UI REQUIREMENTS:
-1. Full sidebar layout if this is App.jsx:
+1. Full sidebar layout if this is App.{ext}:
    - Left sidebar (w-64) with nav links per entity + emoji icons
    - Active link: left border accent + background tint
    - App title at top of sidebar
    - Main content area flex-1 with proper padding
 
-2. For page components (pages/*.jsx):
+2. For page components (pages/*.{ext}):
    - Page header: title + subtitle + "Nuevo [entity]" button
    - Stats row: 3-4 metric cards showing counts/totals
    - Main content: card grid (grid-cols-1 md:grid-cols-2 lg:grid-cols-3)
@@ -435,7 +462,7 @@ MANDATORY UI REQUIREMENTS:
    - Empty state: centered icon + message + CTA button
    - Create/Edit modal with proper form fields
 
-3. For card components (components/*.jsx):
+3. For card components (components/*.{ext}):
    - Clear hierarchy: title > badge > metadata > actions
    - Status badge: pill with semantic bg color
    - Hover effect: hover:shadow-lg hover:-translate-y-1 transition-all duration-200
@@ -457,14 +484,14 @@ MANDATORY UI REQUIREMENTS:
 6. Complete code — no TODOs, no placeholders, no '// add logic here'
 
 Context from other modules:
-{context[:600]}
+{context[:800]}
 
 Generate {file_path} now — complete file, no truncation:"""
         else:
             prompt = f"""Generate complete {lang} code for: {file_path}
 Project: {prd.title}
 Stack: {prd.proposed_stack}
-Context: {context[:400]}
+Context: {context[:600]}
 Rules: no TODOs, no placeholders, production-ready code.
 Generate {file_path}:"""
 
@@ -479,7 +506,7 @@ Generate {file_path}:"""
                 content = content[:-3].strip()
 
         model_name = getattr(llm, "model", "unknown")
-        print(f"[SingleFile:{model_name}] {file_path}: {len(content)} chars")
+        logger.info("[%s] %s: %d chars", model_name, file_path, len(content))
         return content
 
     @staticmethod
@@ -490,10 +517,11 @@ Generate {file_path}:"""
 
     @staticmethod
     def _context_summary(completed: list[ModuleStatus]) -> str:
+        """Build context string from all completed modules (up to 20 files each)."""
         parts: list[str] = []
         for mod in completed:
-            for file in mod.files[:10]:
-                parts.append(f"--- {file.path} ---\n{file.content[:1500]}")
+            for file in mod.files[:20]:
+                parts.append(f"--- {file.path} ---\n{file.content[:2000]}")
         return "\n\n".join(parts) if parts else "(no prior files)"
 
     async def _generate_template_module(

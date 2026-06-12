@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from langchain_ollama import ChatOllama
 
 from agents.code_llm import OLLAMA_BASE_URL, FRONTEND_MODEL
 from models.schemas import GeneratedFile, PRDDocument
+
+logger = logging.getLogger(__name__)
 
 EVALUATION_PROMPT = """You are a senior UI/UX code reviewer.
 Evaluate this React component and return ONLY a JSON object.
@@ -73,6 +76,10 @@ class FrontendQAAgent:
     """Evaluates JSX files against UI/UX criteria and rewrites failing ones."""
 
     def __init__(self) -> None:
+        base = ChatOllama(
+            model=FRONTEND_MODEL,
+            base_url=OLLAMA_BASE_URL,
+        )
         self.eval_llm = ChatOllama(
             model=FRONTEND_MODEL,
             base_url=OLLAMA_BASE_URL,
@@ -99,7 +106,8 @@ class FrontendQAAgent:
         return "\n".join(lines).strip()
 
     async def evaluate(self, file_path: str, code: str) -> dict:
-        prompt = EVALUATION_PROMPT.format(file_path=file_path, code=code[:3000])
+        # Use up to 6000 chars for evaluation — more context for complex components
+        prompt = EVALUATION_PROMPT.format(file_path=file_path, code=code[:6000])
         response = await self.eval_llm.ainvoke(prompt)
         raw = response.content if isinstance(response.content, str) else str(response.content)
         raw = self._clean_markdown(raw)
@@ -115,14 +123,14 @@ class FrontendQAAgent:
             ]
             result["average"] = sum(scores) / len(scores)
             result["needs_rewrite"] = result["average"] < 7
-            print(
-                f"[QAAgent] {file_path}: avg={result['average']:.1f} "
-                f"rewrite={result['needs_rewrite']}"
+            logger.info(
+                "[QA] %s: avg=%.1f rewrite=%s",
+                file_path, result["average"], result["needs_rewrite"],
             )
-            print(f"[QAAgent] Issues: {result.get('issues', [])}")
+            logger.info("[QA] Issues: %s", result.get("issues", []))
             return result
         except json.JSONDecodeError:
-            print(f"[QAAgent] JSON parse failed for {file_path}, forcing rewrite")
+            logger.warning("[QA] JSON parse failed for %s, forcing rewrite", file_path)
             return {"needs_rewrite": True, "average": 0, "issues": ["Could not evaluate"]}
 
     def _build_mandatory_fixes(self, issues: list[str], file_path: str) -> str:
@@ -177,7 +185,7 @@ class FrontendQAAgent:
         content = response.content if isinstance(response.content, str) else str(response.content)
         content = self._clean_markdown(content)
 
-        print(f"[QAAgent] Rewrite complete: {file_path} ({len(content)} chars)")
+        logger.info("[QA] Rewrite complete: %s (%d chars)", file_path, len(content))
         return content
 
     async def process(
@@ -189,20 +197,20 @@ class FrontendQAAgent:
         if not file.path.endswith((".jsx", ".tsx")):
             return file
         if len(file.content.strip()) < 100:
-            print(f"[QAAgent] Skipping {file.path}: too short")
+            logger.debug("[QA] Skipping %s: too short", file.path)
             return file
 
         current_code = file.content
         for iteration in range(max_iterations):
-            print(f"[QAAgent] Evaluating {file.path} (iteration {iteration + 1})")
+            logger.info("[QA] Evaluating %s (iteration %d)", file.path, iteration + 1)
             evaluation = await self.evaluate(file.path, current_code)
 
             if not evaluation.get("needs_rewrite"):
                 avg = evaluation.get("average", 0)
-                print(f"[QAAgent] ✓ {file.path} passed (avg={avg:.1f})")
+                logger.info("[QA] ✓ %s passed (avg=%.1f)", file.path, avg)
                 break
 
-            print(f"[QAAgent] ✗ Rewriting {file.path}...")
+            logger.info("[QA] ✗ Rewriting %s...", file.path)
             current_code = await self.rewrite(
                 file_path=file.path,
                 original_code=current_code,

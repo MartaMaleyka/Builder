@@ -4,14 +4,14 @@ export default {
   theme: {
     extend: {
       colors: {
-        bg: "#0f0f0f",
-        surface: "#1a1a1a",
-        border: "#2a2a2a",
-        primary: "#f0f0f0",
-        secondary: "#888888",
+        bg: "#faf8f4",
+        surface: "#f0ece5",
+        border: "#e0d8ce",
+        primary: "#1c1814",
+        secondary: "#776e65",
         accent: "#7c6af7",
-        success: "#1d9e75",
-        error: "#e24b4a",
+        success: "#2a8a5a",
+        error: "#c94040",
       },
       fontFamily: {
         sans: ["Inter", "system-ui", "sans-serif"],

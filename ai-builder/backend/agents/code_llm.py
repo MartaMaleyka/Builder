@@ -1,6 +1,7 @@
 """LLM invocation helpers for code generation modules."""
 
 import json
+import logging
 import os
 import re
 from typing import TypeVar
@@ -14,6 +15,8 @@ from models.schemas import ModuleLLMOutput
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 T = TypeVar("T", bound=BaseModel)
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -21,7 +24,6 @@ CODE_MODEL = "qwen2.5-coder:7b"
 TEXT_MODEL = "qwen2.5:7b"
 FRONTEND_MODEL = "qwen2.5:14b"
 
-# Para texto general y PRD
 text_llm = ChatOllama(
     model=TEXT_MODEL,
     base_url=OLLAMA_BASE_URL,
@@ -29,7 +31,6 @@ text_llm = ChatOllama(
     num_predict=2048,
 )
 
-# Para código backend (routes, models, services)
 code_llm = ChatOllama(
     model=CODE_MODEL,
     base_url=OLLAMA_BASE_URL,
@@ -37,7 +38,6 @@ code_llm = ChatOllama(
     num_predict=2048,
 )
 
-# Para frontend — modelo más potente
 frontend_llm = ChatOllama(
     model=FRONTEND_MODEL,
     base_url=OLLAMA_BASE_URL,
@@ -78,7 +78,7 @@ class CodeLLMClient:
                 raise ValueError("Structured output parsing failed")
             return result["parsed"]
         except Exception as exc:
-            print(f"[CodeLLM] Structured failed for {schema.__name__}: {exc}")
+            logger.warning("Structured failed for %s: %s", schema.__name__, exc)
             return await self._fallback_json(llm, schema, messages)
 
     async def _fallback_json(
@@ -108,11 +108,12 @@ class CodeLLMClient:
         meta = getattr(raw_message, "response_metadata", {}) or {}
         usage = meta.get("token_usage") or meta.get("usage") or {}
         if not usage:
-            print(f"[CodeLLM:{label}] Token usage unavailable")
+            logger.debug("[%s] Token usage unavailable", label)
             return
-        print(
-            f"[CodeLLM:{label}] tokens — "
-            f"prompt={usage.get('prompt_tokens', '?')}, "
-            f"completion={usage.get('completion_tokens', '?')}, "
-            f"total={usage.get('total_tokens', '?')}"
+        logger.info(
+            "[%s] tokens — prompt=%s, completion=%s, total=%s",
+            label,
+            usage.get("prompt_tokens", "?"),
+            usage.get("completion_tokens", "?"),
+            usage.get("total_tokens", "?"),
         )
