@@ -138,7 +138,6 @@ class ClarifyAgent:
             base_url=OLLAMA_BASE_URL,
             temperature=0.3,
         ).with_structured_output(AgentLLMOutput)
-        # Separate LLM for forced completion — lower temperature, structured to ClarifyContext
         self._fallback_llm = ChatOllama(
             model="qwen2.5:7b",
             base_url=OLLAMA_BASE_URL,

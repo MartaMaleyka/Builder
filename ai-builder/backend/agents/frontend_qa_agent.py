@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import logging
 
+from dotenv import load_dotenv
 from langchain_ollama import ChatOllama
 
-from agents.code_llm import OLLAMA_BASE_URL, FRONTEND_MODEL
+load_dotenv()
+from agents.code_llm import FRONTEND_MODEL, OLLAMA_BASE_URL
 from models.schemas import GeneratedFile, PRDDocument
 
 logger = logging.getLogger(__name__)
@@ -76,10 +78,6 @@ class FrontendQAAgent:
     """Evaluates JSX files against UI/UX criteria and rewrites failing ones."""
 
     def __init__(self) -> None:
-        base = ChatOllama(
-            model=FRONTEND_MODEL,
-            base_url=OLLAMA_BASE_URL,
-        )
         self.eval_llm = ChatOllama(
             model=FRONTEND_MODEL,
             base_url=OLLAMA_BASE_URL,

@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_ollama import ChatOllama
 
+from agents.code_llm import text_llm
 from agents.prd_prompts import build_prd_system_prompt
 from models.schemas import ClarifyContext, PRDDocument
 
@@ -43,9 +44,7 @@ class PRDGenerator:
         ]
 
         try:
-            structured = self._llm.with_structured_output(
-                PRDDocument, include_raw=True
-            )
+            structured = self._llm.with_structured_output(PRDDocument, include_raw=True)
             result = await structured.ainvoke(messages)
             self._log_token_usage(result.get("raw"))
             if result.get("parsing_error") is not None:
@@ -58,7 +57,7 @@ class PRDGenerator:
     async def _fallback_generate(self, messages: list) -> PRDDocument:
         """Parse PRD from raw JSON text when structured output fails."""
         fallback_messages = [*messages, HumanMessage(content=FALLBACK_USER_PROMPT)]
-        response = await self._llm.ainvoke(fallback_messages)
+        response = await text_llm.ainvoke(fallback_messages)
         self._log_token_usage(response)
         text = response.content if isinstance(response.content, str) else str(response.content)
         return PRDDocument.model_validate(self._extract_json(text))

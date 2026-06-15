@@ -23,6 +23,7 @@ from agents.code_llm import CodeLLMClient, code_llm, frontend_llm
 from agents.frontend_qa_agent import FrontendQAAgent
 from agents.code_prompts import build_module_prompt, module_plan
 from agents.template_manager import TemplateManager
+from knowledge_base.kb_retriever import KBRetriever
 from models.schemas import (
     ClarifyContext,
     DockerfileParams,
@@ -73,6 +74,7 @@ class CodeGenerator:
         self._llm = CodeLLMClient()
         self._templates = TemplateManager()
         self._qa_agent = FrontendQAAgent()
+        self._kb = KBRetriever()
 
     async def generate(self, session_id: str) -> GenerationResult:
         prd = self._get_prd(session_id)
@@ -412,6 +414,9 @@ class CodeGenerator:
             return []
 
         context_str = self._context_summary(completed)
+        module_kb = self._kb.get_context_for_module(module_name, prd)
+        if module_kb:
+            context_str = f"{module_kb}\n\n{context_str}"
         logger.info("Generating %d files for %s (parallel)", len(paths), module_name)
 
         async def _gen(path: str) -> ModuleFileOutput | None:
@@ -431,6 +436,10 @@ class CodeGenerator:
         context: str,
         prd: PRDDocument,
     ) -> str:
+        kb_context = self._kb.get_context_for_file(file_path, prd)
+        if kb_context:
+            context = f"{kb_context}\n\n{context}"
+
         if file_path.startswith("frontend/src/"):
             llm = frontend_llm
         else:

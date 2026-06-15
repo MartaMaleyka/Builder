@@ -30,3 +30,6 @@ dist/
 # Logs
 *.log
 logs/
+
+# ChromaDB vector store (regenerated on startup)
+ai-builder/backend/knowledge_base/chroma_db/

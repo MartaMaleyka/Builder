@@ -1,0 +1,494 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "cat": "frontend",
+      "desc": "navigation sidebar component",
+      "id": "sidebar"
+    },
+    {
+      "cat": "frontend",
+      "desc": "top navigation bar",
+      "id": "navbar"
+    },
+    {
+      "cat": "frontend",
+      "desc": "page layout wrapper",
+      "id": "layout"
+    },
+    {
+      "cat": "frontend",
+      "desc": "table with CRUD actions",
+      "id": "data_table"
+    },
+    {
+      "cat": "frontend",
+      "desc": "responsive card grid",
+      "id": "card_grid"
+    },
+    {
+      "cat": "frontend",
+      "desc": "modal dialog with form",
+      "id": "modal_form"
+    },
+    {
+      "cat": "frontend",
+      "desc": "metrics summary row",
+      "id": "stats_bar"
+    },
+    {
+      "cat": "frontend",
+      "desc": "empty list placeholder",
+      "id": "empty_state"
+    },
+    {
+      "cat": "frontend",
+      "desc": "loading skeleton",
+      "id": "skeleton"
+    },
+    {
+      "cat": "frontend",
+      "desc": "form field with validation",
+      "id": "form_input"
+    },
+    {
+      "cat": "frontend",
+      "desc": "status pill badge",
+      "id": "badge"
+    },
+    {
+      "cat": "frontend",
+      "desc": "react router setup",
+      "id": "routing"
+    },
+    {
+      "cat": "frontend",
+      "desc": "custom react hooks",
+      "id": "hooks"
+    },
+    {
+      "cat": "frontend",
+      "desc": "react context state",
+      "id": "context"
+    },
+    {
+      "cat": "backend",
+      "desc": "database query layer",
+      "id": "repository"
+    },
+    {
+      "cat": "backend",
+      "desc": "business logic layer",
+      "id": "service"
+    },
+    {
+      "cat": "backend",
+      "desc": "HTTP request handler",
+      "id": "controller"
+    },
+    {
+      "cat": "backend",
+      "desc": "express route definitions",
+      "id": "routes"
+    },
+    {
+      "cat": "backend",
+      "desc": "express middleware",
+      "id": "middleware"
+    },
+    {
+      "cat": "backend",
+      "desc": "global error handling",
+      "id": "error_handler"
+    },
+    {
+      "cat": "backend",
+      "desc": "input validation",
+      "id": "validator"
+    },
+    {
+      "cat": "backend",
+      "desc": "authentication logic",
+      "id": "auth"
+    },
+    {
+      "cat": "backend",
+      "desc": "JSON web tokens",
+      "id": "jwt"
+    },
+    {
+      "cat": "backend",
+      "desc": "create read update delete",
+      "id": "crud"
+    },
+    {
+      "cat": "database",
+      "desc": "SQLite with better-sqlite3",
+      "id": "sqlite"
+    },
+    {
+      "cat": "database",
+      "desc": "PostgreSQL database",
+      "id": "postgres"
+    },
+    {
+      "cat": "database",
+      "desc": "database migrations",
+      "id": "migration"
+    },
+    {
+      "cat": "database",
+      "desc": "seed data scripts",
+      "id": "seed"
+    },
+    {
+      "cat": "database",
+      "desc": "database schema design",
+      "id": "schema"
+    },
+    {
+      "cat": "config",
+      "desc": "Docker containerization",
+      "id": "docker"
+    },
+    {
+      "cat": "config",
+      "desc": "Vite build tool",
+      "id": "vite"
+    },
+    {
+      "cat": "config",
+      "desc": "Tailwind CSS",
+      "id": "tailwind"
+    },
+    {
+      "cat": "config",
+      "desc": "Express.js server",
+      "id": "express"
+    },
+    {
+      "cat": "config",
+      "desc": "FastAPI Python server",
+      "id": "fastapi"
+    },
+    {
+      "cat": "pattern",
+      "desc": "Model View Controller",
+      "id": "mvc"
+    },
+    {
+      "cat": "pattern",
+      "desc": "Clean Architecture",
+      "id": "clean_arch"
+    },
+    {
+      "cat": "pattern",
+      "desc": "RESTful API design",
+      "id": "rest_api"
+    }
+  ],
+  "links": [
+    {
+      "relation": "requires",
+      "weight": 0.9,
+      "source": "sidebar",
+      "target": "routing"
+    },
+    {
+      "relation": "requires",
+      "weight": 0.9,
+      "source": "navbar",
+      "target": "routing"
+    },
+    {
+      "relation": "contains",
+      "weight": 1.0,
+      "source": "layout",
+      "target": "sidebar"
+    },
+    {
+      "relation": "contains",
+      "weight": 1.0,
+      "source": "layout",
+      "target": "navbar"
+    },
+    {
+      "relation": "triggers",
+      "weight": 0.9,
+      "source": "data_table",
+      "target": "modal_form"
+    },
+    {
+      "relation": "shows",
+      "weight": 0.8,
+      "source": "data_table",
+      "target": "empty_state"
+    },
+    {
+      "relation": "shows",
+      "weight": 0.8,
+      "source": "data_table",
+      "target": "skeleton"
+    },
+    {
+      "relation": "contains",
+      "weight": 0.7,
+      "source": "data_table",
+      "target": "badge"
+    },
+    {
+      "relation": "triggers",
+      "weight": 0.9,
+      "source": "card_grid",
+      "target": "modal_form"
+    },
+    {
+      "relation": "shows",
+      "weight": 0.8,
+      "source": "card_grid",
+      "target": "empty_state"
+    },
+    {
+      "relation": "shows",
+      "weight": 0.8,
+      "source": "card_grid",
+      "target": "skeleton"
+    },
+    {
+      "relation": "contains",
+      "weight": 0.7,
+      "source": "card_grid",
+      "target": "badge"
+    },
+    {
+      "relation": "contains",
+      "weight": 1.0,
+      "source": "modal_form",
+      "target": "form_input"
+    },
+    {
+      "relation": "uses",
+      "weight": 0.8,
+      "source": "modal_form",
+      "target": "validator"
+    },
+    {
+      "relation": "uses",
+      "weight": 0.7,
+      "source": "stats_bar",
+      "target": "hooks"
+    },
+    {
+      "relation": "uses",
+      "weight": 0.7,
+      "source": "routing",
+      "target": "hooks"
+    },
+    {
+      "relation": "queries",
+      "weight": 0.8,
+      "source": "repository",
+      "target": "sqlite"
+    },
+    {
+      "relation": "queries",
+      "weight": 0.8,
+      "source": "repository",
+      "target": "postgres"
+    },
+    {
+      "relation": "calls",
+      "weight": 1.0,
+      "source": "service",
+      "target": "repository"
+    },
+    {
+      "relation": "calls",
+      "weight": 1.0,
+      "source": "controller",
+      "target": "service"
+    },
+    {
+      "relation": "calls",
+      "weight": 1.0,
+      "source": "routes",
+      "target": "controller"
+    },
+    {
+      "relation": "uses",
+      "weight": 0.9,
+      "source": "routes",
+      "target": "middleware"
+    },
+    {
+      "relation": "uses",
+      "weight": 0.8,
+      "source": "routes",
+      "target": "validator"
+    },
+    {
+      "relation": "protected_by",
+      "weight": 0.7,
+      "source": "routes",
+      "target": "auth"
+    },
+    {
+      "relation": "includes",
+      "weight": 0.8,
+      "source": "middleware",
+      "target": "error_handler"
+    },
+    {
+      "relation": "uses",
+      "weight": 1.0,
+      "source": "auth",
+      "target": "jwt"
+    },
+    {
+      "relation": "implements",
+      "weight": 1.0,
+      "source": "auth",
+      "target": "middleware"
+    },
+    {
+      "relation": "uses",
+      "weight": 1.0,
+      "source": "crud",
+      "target": "repository"
+    },
+    {
+      "relation": "uses",
+      "weight": 1.0,
+      "source": "crud",
+      "target": "service"
+    },
+    {
+      "relation": "uses",
+      "weight": 1.0,
+      "source": "crud",
+      "target": "controller"
+    },
+    {
+      "relation": "displayed_in",
+      "weight": 0.8,
+      "source": "crud",
+      "target": "data_table"
+    },
+    {
+      "relation": "uses",
+      "weight": 0.7,
+      "source": "sqlite",
+      "target": "seed"
+    },
+    {
+      "relation": "uses",
+      "weight": 0.9,
+      "source": "postgres",
+      "target": "migration"
+    },
+    {
+      "relation": "versioned_by",
+      "weight": 0.8,
+      "source": "schema",
+      "target": "migration"
+    },
+    {
+      "relation": "populated_by",
+      "weight": 0.8,
+      "source": "schema",
+      "target": "seed"
+    },
+    {
+      "relation": "runs",
+      "weight": 0.8,
+      "source": "docker",
+      "target": "express"
+    },
+    {
+      "relation": "runs",
+      "weight": 0.8,
+      "source": "docker",
+      "target": "fastapi"
+    },
+    {
+      "relation": "integrates",
+      "weight": 1.0,
+      "source": "vite",
+      "target": "tailwind"
+    },
+    {
+      "relation": "supports",
+      "weight": 0.7,
+      "source": "vite",
+      "target": "routing"
+    },
+    {
+      "relation": "mounts",
+      "weight": 1.0,
+      "source": "express",
+      "target": "routes"
+    },
+    {
+      "relation": "uses",
+      "weight": 1.0,
+      "source": "express",
+      "target": "middleware"
+    },
+    {
+      "relation": "implements",
+      "weight": 1.0,
+      "source": "mvc",
+      "target": "controller"
+    },
+    {
+      "relation": "implements",
+      "weight": 0.8,
+      "source": "mvc",
+      "target": "service"
+    },
+    {
+      "relation": "implements",
+      "weight": 0.9,
+      "source": "mvc",
+      "target": "repository"
+    },
+    {
+      "relation": "implements",
+      "weight": 1.0,
+      "source": "clean_arch",
+      "target": "repository"
+    },
+    {
+      "relation": "implements",
+      "weight": 1.0,
+      "source": "clean_arch",
+      "target": "service"
+    },
+    {
+      "relation": "implements",
+      "weight": 1.0,
+      "source": "clean_arch",
+      "target": "controller"
+    },
+    {
+      "relation": "defines",
+      "weight": 1.0,
+      "source": "rest_api",
+      "target": "routes"
+    },
+    {
+      "relation": "handled_by",
+      "weight": 1.0,
+      "source": "rest_api",
+      "target": "controller"
+    },
+    {
+      "relation": "exposes",
+      "weight": 0.9,
+      "source": "rest_api",
+      "target": "crud"
+    }
+  ]
+}

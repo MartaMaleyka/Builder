@@ -13,6 +13,8 @@ from agents.clarify_agent import ClarifyAgent
 from agents.code_generator import CodeGenerator, collect_files_for_zip, generation_store
 from agents.code_zip import build_project_zip
 from agents.prd_generator import PRDGenerator
+from knowledge_base.kb_graph import KnowledgeGraph
+from knowledge_base.kb_loader import init_knowledge_base
 from models.schemas import (
     ClarifyContext,
     ClarifyRequest,
@@ -68,6 +70,11 @@ async def _cleanup_old_sessions() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    graph = KnowledgeGraph()
+    logger.info("[API] Graph: %d nodes", graph.graph.number_of_nodes())
+    init_knowledge_base()
+    logger.info("[API] Knowledge base ready")
+
     asyncio.create_task(_cleanup_old_sessions())
     yield
 
